@@ -7,6 +7,7 @@ the real API.  Set ``IMENTIV_MOCK=false`` and supply a valid
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 import os
 import random
 from pathlib import Path
@@ -15,6 +16,7 @@ from uuid import uuid4
 
 import httpx
 
+from backend.shared.db import get_media_store
 from backend.shared.ai.settings import AISettings
 
 
@@ -34,32 +36,34 @@ def _is_mock_mode() -> bool:
 # Public API  — each checks mock mode first
 # ------------------------------------------------------------------
 
-async def upload_video(settings: AISettings, video_path: str) -> str:
+async def upload_video(settings: AISettings, video_source: str | dict[str, Any]) -> str:
     """Upload video and return the Imentiv video id."""
 
     if _is_mock_mode():
         return f"mock-video-{uuid4().hex[:8]}"
 
-    return await _upload_with_http(
-        settings=settings,
-        path=video_path,
-        endpoint="videos",
-        file_field="video_file",
-    )
+    async with _materialized_media_path(video_source) as video_path:
+        return await _upload_with_http(
+            settings=settings,
+            path=video_path,
+            endpoint="videos",
+            file_field="video_file",
+        )
 
 
-async def upload_audio(settings: AISettings, audio_path: str) -> str:
+async def upload_audio(settings: AISettings, audio_source: str | dict[str, Any]) -> str:
     """Upload audio and return the Imentiv audio id."""
 
     if _is_mock_mode():
         return f"mock-audio-{uuid4().hex[:8]}"
 
-    return await _upload_with_http(
-        settings=settings,
-        path=audio_path,
-        endpoint="audios",
-        file_field="audio_file",
-    )
+    async with _materialized_media_path(audio_source) as audio_path:
+        return await _upload_with_http(
+            settings=settings,
+            path=audio_path,
+            endpoint="audios",
+            file_field="audio_file",
+        )
 
 
 async def get_video_emotions(settings: AISettings, video_id: str) -> list[dict[str, Any]]:
@@ -209,3 +213,28 @@ def _normalize_emotion_event(event: dict[str, Any]) -> dict[str, Any]:
         "confidence": float(event.get("confidence") or event.get("score") or 0),
         "timestamp": int(event.get("timestamp") or event.get("time_ms") or 0),
     }
+
+
+@asynccontextmanager
+async def _materialized_media_path(media_source: str | dict[str, Any]):
+    if isinstance(media_source, str):
+        yield media_source
+        return
+
+    if not isinstance(media_source, dict):
+        raise RuntimeError("Media upload metadata was missing.")
+
+    file_id = media_source.get("file_id")
+    if not file_id:
+        raise RuntimeError("Media file identifier was missing.")
+
+    async with get_media_store().materialize_temp_file(
+        file_id=str(file_id),
+        suffix=_upload_suffix(media_source),
+    ) as media_path:
+        yield media_path
+
+
+def _upload_suffix(upload: dict[str, Any]) -> str:
+    filename = str(upload.get("filename") or upload.get("original_filename") or "")
+    return Path(filename).suffix or ".webm"

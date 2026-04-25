@@ -5,7 +5,7 @@ from backend.sprint.phase_a.graph import build_initial_state, build_merged_analy
 
 class PhaseAMergeTests(unittest.TestCase):
     def test_merge_correlates_words_with_nearest_stream_events(self) -> None:
-        state = build_initial_state("Job Interview", "Confident", 5)
+        state = build_initial_state("Happiness")
         state.update(
             {
                 "scenario_prompt": "Tell me about a win.",
@@ -15,11 +15,11 @@ class PhaseAMergeTests(unittest.TestCase):
                     {"word": "delivered", "start": 1.1, "end": 1.4},
                 ],
                 "video_emotions": [
-                    {"emotion_type": "Confident", "confidence": 0.72, "timestamp": 1100},
-                    {"emotion_type": "Calm", "confidence": 0.4, "timestamp": 100},
+                    {"emotion_type": "Happiness", "confidence": 0.72, "timestamp": 1100},
+                    {"emotion_type": "Neutrality (Neutral)", "confidence": 0.4, "timestamp": 100},
                 ],
                 "audio_emotions": [
-                    {"emotion_type": "Assertive", "confidence": 0.8, "timestamp": 1050},
+                    {"emotion_type": "Surprise", "confidence": 0.8, "timestamp": 1050},
                 ],
             }
         )
@@ -32,18 +32,18 @@ class PhaseAMergeTests(unittest.TestCase):
         self.assertEqual(len(word_correlations), 2)
         delivered = word_correlations[1]
         self.assertEqual(delivered["word"], "delivered")
-        self.assertEqual(delivered["face_emotion_type"], "Confident")
-        self.assertEqual(delivered["voice_emotion_type"], "Assertive")
+        self.assertEqual(delivered["face_emotion_type"], "Happiness")
+        self.assertEqual(delivered["voice_emotion_type"], "Surprise")
 
     def test_merge_handles_missing_streams_as_soft_failure(self) -> None:
-        state = build_initial_state("Public Speaking", "Calm", 3)
+        state = build_initial_state("Sadness")
         state.update(
             {
                 "transcript": "",
                 "word_timestamps": [],
                 "video_emotions": [],
                 "audio_emotions": [
-                    {"emotion_type": "Calm", "confidence": 0.5, "timestamp": 200},
+                    {"emotion_type": "Sadness", "confidence": 0.5, "timestamp": 200},
                 ],
             }
         )

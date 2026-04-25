@@ -2,9 +2,11 @@
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from backend.shared.db import get_media_store
 from backend.shared.ai.service import AIServiceFacade
 
 
@@ -28,12 +30,13 @@ async def stream_tts_chunks(
 async def transcribe_audio(
     *,
     ai_service: AIServiceFacade,
-    audio_path: str,
+    audio_source: str | dict[str, Any],
 ) -> tuple[str, list[dict[str, Any]]]:
     """Transcribe audio with word-level timestamps via ElevenLabs STT."""
 
-    response = await asyncio.to_thread(_transcribe_audio_sync, ai_service, audio_path)
-    return _extract_transcript(response), _extract_words(response)
+    async with _materialized_audio_path(audio_source) as audio_path:
+        response = await asyncio.to_thread(_transcribe_audio_sync, ai_service, audio_path)
+        return _extract_transcript(response), _extract_words(response)
 
 
 # ------------------------------------------------------------------
@@ -84,6 +87,31 @@ def _transcribe_audio_sync(ai_service: AIServiceFacade, audio_path: str) -> Any:
             model_id=settings.elevenlabs_stt_model,
             timestamps_granularity="word",
         )
+
+
+@asynccontextmanager
+async def _materialized_audio_path(audio_source: str | dict[str, Any]):
+    if isinstance(audio_source, str):
+        yield audio_source
+        return
+
+    if not isinstance(audio_source, dict):
+        raise RuntimeError("Audio upload metadata was missing.")
+
+    file_id = audio_source.get("file_id")
+    if not file_id:
+        raise RuntimeError("Audio file identifier was missing.")
+
+    async with get_media_store().materialize_temp_file(
+        file_id=str(file_id),
+        suffix=_upload_suffix(audio_source),
+    ) as audio_path:
+        yield audio_path
+
+
+def _upload_suffix(upload: dict[str, Any]) -> str:
+    filename = str(upload.get("filename") or upload.get("original_filename") or "")
+    return Path(filename).suffix or ".webm"
 
 
 def _extract_transcript(response: Any) -> str:

@@ -20,11 +20,12 @@ class ActiveSession:
     initial_state: dict[str, Any]
     websocket: WebSocket | None = None
     pending_events: list[dict[str, Any]] = field(default_factory=list)
-    recording_future: asyncio.Future[tuple[str, str]] | None = None
+    recording_future: asyncio.Future[tuple[dict[str, Any], dict[str, Any]]] | None = None
     continue_future: asyncio.Future[bool] | None = None
     task: asyncio.Task | None = None
     latest_state: dict[str, Any] = field(default_factory=dict)
     rounds: list[RoundSummary] = field(default_factory=list)
+    media_refs: list[dict[str, Any]] = field(default_factory=list)
 
 
 class PhaseASessionManager:
@@ -74,19 +75,27 @@ class PhaseASessionManager:
         except RuntimeError:
             session.pending_events.append(event)
 
-    async def wait_for_recording(self, session_id: str) -> tuple[str, str]:
+    async def wait_for_recording(self, session_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         session = self.get_session(session_id)
         loop = asyncio.get_running_loop()
         session.recording_future = loop.create_future()
         return await session.recording_future
 
-    def submit_recording(self, session_id: str, video_path: str, audio_path: str) -> None:
+    def submit_recording(
+        self,
+        session_id: str,
+        video_upload: dict[str, Any],
+        audio_upload: dict[str, Any],
+    ) -> None:
         session = self.get_session(session_id)
         if session.recording_future is None:
             raise RuntimeError("The session is not waiting for a recording.")
         if session.recording_future.done():
             raise RuntimeError("The recording has already been submitted.")
-        session.recording_future.set_result((video_path, audio_path))
+        session.recording_future.set_result((video_upload, audio_upload))
+
+    def get_next_round_index(self, session_id: str) -> int:
+        return len(self.get_session(session_id).rounds)
 
     async def wait_for_continue(self, session_id: str) -> bool:
         session = self.get_session(session_id)
@@ -112,6 +121,7 @@ class PhaseASessionManager:
             get_session_repository().update_phase_a_session(
                 session_id=session_id,
                 raw_state=state,
+                media_refs=session.media_refs,
             )
         )
 
@@ -125,7 +135,9 @@ class PhaseASessionManager:
             filler_word_count=int(merged_analysis.get("filler_word_count") or 0),
         )
         session = self.get_session(session_id)
+        round_index = len(session.rounds)
         session.rounds.append(summary)
+        session.media_refs.extend(_build_round_media_refs(session_id, round_index, state))
         session_summary = self.get_summary(session_id).model_dump()
         schedule_repository_write(
             get_session_repository().update_phase_a_session(
@@ -133,6 +145,7 @@ class PhaseASessionManager:
                 rounds=[round_summary.model_dump() for round_summary in session.rounds],
                 summary=session_summary,
                 raw_state=state,
+                media_refs=session.media_refs,
             )
         )
 
@@ -158,4 +171,33 @@ def get_session_manager() -> PhaseASessionManager:
     """Return the process-local Phase A session registry."""
 
     return _SESSION_MANAGER
+
+
+def _build_round_media_refs(session_id: str, round_index: int, state: dict[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for media_kind in ("video", "audio"):
+        upload = state.get(f"{media_kind}_upload")
+        if not isinstance(upload, dict):
+            continue
+        refs.append(
+            {
+                "round_index": round_index,
+                "kind": media_kind,
+                "download_url": f"/api/phase-a/sessions/{session_id}/rounds/{round_index}/{media_kind}",
+                "upload": _public_upload_ref(upload),
+            }
+        )
+    return refs
+
+
+def _public_upload_ref(upload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file_id": upload.get("file_id"),
+        "storage_key": upload.get("storage_key"),
+        "filename": upload.get("filename"),
+        "original_filename": upload.get("original_filename"),
+        "mime_type": upload.get("mime_type"),
+        "size_bytes": upload.get("size_bytes"),
+        "uploaded_at": upload.get("uploaded_at"),
+    }
 

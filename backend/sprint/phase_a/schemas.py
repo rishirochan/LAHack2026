@@ -5,18 +5,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-Theme = Literal[
-    "Job Interview",
-    "Salary Negotiation",
-    "Casual Conversation",
-    "Public Speaking",
-]
 TargetEmotion = Literal[
-    "Confident",
-    "Enthusiastic",
-    "Calm",
-    "Assertive",
-    "Passionate",
+    "Anger",
+    "Contempt",
+    "Disgust",
+    "Fear",
+    "Happiness",
+    "Neutrality (Neutral)",
+    "Sadness",
+    "Surprise",
 ]
 SessionStatus = Literal[
     "setup",
@@ -32,9 +29,7 @@ SessionStatus = Literal[
 class StartSessionRequest(BaseModel):
     """Initial state supplied by the frontend."""
 
-    theme: Theme
     target_emotion: TargetEmotion
-    difficulty: int = Field(ge=1, le=10)
 
 
 class StartSessionResponse(BaseModel):

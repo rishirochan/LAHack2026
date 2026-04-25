@@ -10,6 +10,30 @@ SessionMode = Literal["phase_a", "phase_b"]
 SessionStatus = Literal["active", "complete", "error"]
 
 
+class MediaUploadDocument(BaseModel):
+    """Metadata for one persisted media file."""
+
+    file_id: str | None = None
+    storage_key: str
+    filename: str
+    original_filename: str
+    mime_type: str
+    size_bytes: int
+    uploaded_at: str
+    download_url: str | None = None
+
+
+class MediaReferenceDocument(BaseModel):
+    """Durable session-linked reference to one upload."""
+
+    kind: str
+    upload: MediaUploadDocument
+    round_index: int | None = None
+    turn_index: int | None = None
+    chunk_index: int | None = None
+    download_url: str | None = None
+
+
 class PracticeSessionDocument(BaseModel):
     """Top-level practice session document stored in MongoDB."""
 
@@ -24,6 +48,7 @@ class PracticeSessionDocument(BaseModel):
     setup: dict[str, Any] = Field(default_factory=dict)
     rounds: list[dict[str, Any]] = Field(default_factory=list)
     summary: dict[str, Any] | None = None
+    media_refs: list[MediaReferenceDocument] = Field(default_factory=list)
     raw_state: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -44,6 +69,8 @@ class SessionChunkDocument(BaseModel):
     audio_emotions: list[dict[str, Any]] = Field(default_factory=list)
     transcript_segment: str = ""
     merged_summary: dict[str, Any] | None = None
+    video_upload: MediaUploadDocument | None = None
+    audio_upload: MediaUploadDocument | None = None
     dominant_video_emotion: str | None = None
     video_confidence: float | None = None
     dominant_audio_emotion: str | None = None
