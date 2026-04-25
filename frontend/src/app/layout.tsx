@@ -4,7 +4,7 @@ import { AuthProvider } from '@/auth/AuthProvider';
 import { VoiceSettingsProvider } from '@/context/VoiceSettingsContext';
 
 export const metadata: Metadata = {
-  title: 'Eloquence',
+  title: 'Clarity',
   description: 'AI communication coach',
 };
 
