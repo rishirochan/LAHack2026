@@ -100,7 +100,7 @@ export function usePhaseASession() {
 
     const formData = new FormData();
     formData.append('video_file', videoBlob, 'phase-a-video.webm');
-    formData.append('audio_file', audioBlob, 'phase-a-audio.webm');
+    formData.append('audio_file', audioBlob, getAudioFilename(audioBlob));
     formData.append('duration_seconds', String(durationSeconds));
 
     const response = await fetch(`${API_URL}/api/phase-a/sessions/${sessionId}/recording`, {
@@ -285,5 +285,9 @@ export function usePhaseASession() {
     chooseContinue,
     resetAll,
   };
+}
+
+function getAudioFilename(audioBlob: Blob) {
+  return audioBlob.type === 'audio/wav' ? 'phase-a-audio.wav' : 'phase-a-audio.webm';
 }
 
