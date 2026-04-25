@@ -8,8 +8,6 @@ def _set_required_env() -> None:
     os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
     os.environ["OPENROUTER_MODEL_GEMMA"] = "test/gemma"
     os.environ["OPENROUTER_MODEL_HAIKU"] = "test/haiku"
-    os.environ["GOOGLE_AI_API_KEY"] = "test-google-key"
-    os.environ["GOOGLE_GEMMA_MODEL"] = "gemma-4"
     os.environ["ELEVENLABS_API_KEY"] = "test-elevenlabs-key"
     os.environ["ELEVENLABS_DEFAULT_VOICE_ID"] = "voice-test"
     os.environ["ELEVENLABS_STT_MODEL"] = "scribe_v1"
@@ -43,7 +41,7 @@ class AISetupSmokeTests(unittest.TestCase):
         settings = validate_settings()
         self.assertEqual(settings.openrouter_model_gemma, "test/gemma")
         self.assertEqual(settings.openrouter_model_haiku, "test/haiku")
-        self.assertEqual(settings.google_gemma_model, "gemma-4")
+        self.assertEqual(settings.google_ai_api_key, "")
         self.assertEqual(settings.elevenlabs_stt_model, "scribe_v1")
 
     @patch("backend.shared.ai.service.create_elevenlabs_client", return_value=object())

@@ -5,6 +5,36 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+coverage/
 
 # Virtual environments
 .venv
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Frontend build output
+node_modules/
+.next/
+
+# Editor / IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS / local runtime files
+.DS_Store
+*.log
+*.tmp
+*.temp
+.ipynb_checkpoints/

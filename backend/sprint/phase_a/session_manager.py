@@ -8,8 +8,7 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 
-from backend.sprint.phase_a.schemas import RoundSummary, SessionSummaryResponse
-
+from .schemas import RoundSummary, SessionSummaryResponse
 
 @dataclass
 class ActiveSession:
@@ -46,8 +45,8 @@ class PhaseASessionManager:
 
     async def bind_websocket(self, session_id: str, websocket: WebSocket) -> None:
         session = self.get_session(session_id)
-        session.websocket = websocket
         await websocket.accept()
+        session.websocket = websocket
         for event in session.pending_events:
             await websocket.send_json(event)
         session.pending_events.clear()
@@ -62,7 +61,10 @@ class PhaseASessionManager:
         if session.websocket is None:
             session.pending_events.append(event)
             return
-        await session.websocket.send_json(event)
+        try:
+            await session.websocket.send_json(event)
+        except RuntimeError:
+            session.pending_events.append(event)
 
     async def wait_for_recording(self, session_id: str) -> tuple[str, str]:
         session = self.get_session(session_id)

@@ -17,7 +17,7 @@ class AISettings(BaseSettings):
     openrouter_model_gemma: str = "openrouter/gemma-placeholder"
     openrouter_model_haiku: str = "openrouter/haiku-placeholder"
 
-    google_ai_api_key: str
+    google_ai_api_key: str = ""
     google_gemma_model: str = "gemma-4"
 
     elevenlabs_api_key: str

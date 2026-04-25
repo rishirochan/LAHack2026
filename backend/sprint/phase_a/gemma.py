@@ -1,16 +1,14 @@
 """Gemma prompt helpers for Phase A."""
 
-import asyncio
 import json
-import urllib.error
-import urllib.request
+import logging
+from typing import Any
 
-from backend.shared.ai.settings import AISettings
+from ...shared.ai.providers.openrouter import create_gemma_model
+from ...shared.ai.settings import AISettings
 
 
-GENERATE_CONTENT_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-)
+logger = logging.getLogger(__name__)
 
 
 async def generate_scenario_prompt(
@@ -59,50 +57,46 @@ async def generate_coach_critique(
 
 
 async def _generate_text(*, settings: AISettings, prompt: str) -> str:
-    """Call the Google Generative Language API without adding another SDK."""
+    """Call Gemma through the shared OpenRouter model client."""
 
-    return await asyncio.to_thread(_generate_text_sync, settings, prompt)
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured for Gemma requests.")
 
-
-def _generate_text_sync(settings: AISettings, prompt: str) -> str:
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": prompt}],
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 256,
-        },
-    }
-    data = json.dumps(payload).encode("utf-8")
-    url = GENERATE_CONTENT_URL.format(
-        model=settings.google_gemma_model,
-        key=settings.google_ai_api_key,
-    )
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
+    model = create_gemma_model(settings)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Gemma request failed: {detail}") from error
+        response = await model.ainvoke(prompt)
+    except Exception as error:
+        logger.exception(
+            "OpenRouter Gemma request failed for model %s.",
+            settings.openrouter_model_gemma,
+        )
+        raise RuntimeError(f"OpenRouter Gemma request failed: {error}") from error
 
-    candidates = body.get("candidates") or []
-    if not candidates:
-        raise RuntimeError("Gemma returned no candidates.")
-
-    parts = candidates[0].get("content", {}).get("parts") or []
-    text = "".join(part.get("text", "") for part in parts).strip()
+    text = _extract_text(getattr(response, "content", response))
     if not text:
-        raise RuntimeError("Gemma returned an empty response.")
+        logger.error(
+            "OpenRouter Gemma returned an empty response for model %s.",
+            settings.openrouter_model_gemma,
+        )
+        raise RuntimeError("OpenRouter Gemma returned an empty response.")
     return text
+
+
+def _extract_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts).strip()
+
+    return str(content).strip() if content is not None else ""
 
