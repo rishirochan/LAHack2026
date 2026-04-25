@@ -27,6 +27,7 @@ const defaultSetup: SessionSetup = {
 export default function SprintPage() {
   const [setup, setSetup] = useState<SessionSetup>(defaultSetup);
   const [isRecording, setIsRecording] = useState(false);
+  const [hasPreviewStream, setHasPreviewStream] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(MAX_RECORDING_SECONDS);
   const [localError, setLocalError] = useState('');
   const previewRef = useRef<HTMLVideoElement | null>(null);
@@ -83,6 +84,7 @@ export default function SprintPage() {
         mediaStreamRef.current ??
         (await navigator.mediaDevices.getUserMedia({ video: true, audio: true }));
       mediaStreamRef.current = stream;
+      setHasPreviewStream(true);
       if (previewRef.current) {
         previewRef.current.srcObject = stream;
       }
@@ -157,6 +159,7 @@ export default function SprintPage() {
   function stopTracks() {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
+    setHasPreviewStream(false);
   }
 
   useEffect(() => {
@@ -182,7 +185,7 @@ export default function SprintPage() {
           </p>
         </div>
 
-        <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
+        <div className="rounded-2xl border border-cream-300 bg-white p-8 shadow-sm">
           <h2 className="mb-4 text-sm font-medium text-slate-700">Choose an emotion to practice</h2>
           <div className="mb-8 flex flex-wrap gap-3">
             {emotionOptions.map((emotion) => (
@@ -202,7 +205,7 @@ export default function SprintPage() {
 
           <button
             onClick={handleStart}
-            className="rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
+            className="rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
           >
             Generate prompt →
           </button>
@@ -226,7 +229,7 @@ export default function SprintPage() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-3xl border border-cream-200 bg-white p-6">
+          <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">
               Critiques
             </h2>
@@ -242,7 +245,7 @@ export default function SprintPage() {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-cream-200 bg-white p-6">
+          <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">
               Match Score Trend
             </h2>
@@ -277,7 +280,7 @@ export default function SprintPage() {
 
         <button
           onClick={resetAll}
-          className="rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
+          className="rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
         >
           Start new session
         </button>
@@ -287,14 +290,14 @@ export default function SprintPage() {
 
   if (status === 'error') {
     return (
-      <div className="mx-auto max-w-2xl rounded-3xl border border-red-200 bg-white p-8 text-center shadow-sm">
+      <div className="mx-auto max-w-2xl rounded-2xl border border-red-200 bg-white p-8 text-center shadow-sm">
         <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
           Something went wrong
         </h1>
         <p className="mt-3 text-sm text-slate-600">{shownError || 'Try starting the drill again.'}</p>
         <button
           onClick={resetAll}
-          className="mt-6 rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
+          className="mt-6 rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
         >
           Restart
         </button>
@@ -304,7 +307,7 @@ export default function SprintPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-3xl border border-cream-200 bg-white p-6">
+      <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-navy-500">Emotion Prompt</p>
@@ -323,7 +326,7 @@ export default function SprintPage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1fr_260px]">
-        <div className="flex min-h-[340px] flex-col items-center justify-center rounded-3xl border border-cream-200 bg-white p-8">
+        <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-cream-300 bg-white p-8 shadow-sm">
           {status === 'processing' ? (
             <ProcessingStages activeStage={processingStage} />
           ) : (
@@ -354,7 +357,7 @@ export default function SprintPage() {
           )}
         </div>
 
-        <div className="rounded-3xl border border-cream-200 bg-white p-4">
+        <div className="rounded-2xl border border-cream-300 bg-white p-4 shadow-sm">
           <p className="mb-3 text-sm font-semibold text-slate-900">Webcam preview</p>
           <video
             ref={previewRef}
@@ -363,12 +366,17 @@ export default function SprintPage() {
             playsInline
             className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
           />
+          {!hasPreviewStream && (
+            <div className="mt-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm text-slate-500">
+              Camera preview appears once you start the recording.
+            </div>
+          )}
         </div>
       </section>
 
       {(status === 'critique' || roundResult) && (
         <section className="grid gap-6 lg:grid-cols-[1fr_280px]">
-          <div className="rounded-3xl border border-cream-200 bg-white p-6">
+          <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
             <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-navy-500">Coach Critique</p>
             <p className="text-lg leading-relaxed text-slate-700">{critique}</p>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -378,7 +386,7 @@ export default function SprintPage() {
                     setLocalError(error instanceof Error ? error.message : 'Could not send session decision.');
                   });
                 }}
-                className="rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
+                className="rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
               >
                 Try Again
               </button>
@@ -451,7 +459,7 @@ function MeasuredSignalsCard({
   return (
     <div className="space-y-4">
       <ScoreCard score={score} />
-      <div className="rounded-3xl border border-cream-200 bg-white p-6">
+      <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
         <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">Measured Signals</p>
         <div className="space-y-3">
           {displayMetrics.map((metric) => (
@@ -524,7 +532,7 @@ function ScoreCard({ score }: { score: number }) {
   const dashOffset = circumference * (1 - Math.min(Math.max(score, 0), 1));
 
   return (
-    <div className="rounded-3xl border border-cream-200 bg-white p-6">
+    <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
       <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">Emotion Match</p>
       <div className="relative mx-auto h-28 w-28">
         <svg className="-rotate-90" viewBox="0 0 100 100">

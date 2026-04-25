@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-SessionMode = Literal["phase_a", "phase_b"]
+SessionMode = Literal["phase_a", "phase_b", "phase_c"]
 SessionStatus = Literal["active", "complete", "error"]
 
 

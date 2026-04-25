@@ -20,7 +20,6 @@ export type SessionStatus = "active" | "complete" | "error";
 
 export interface StartConversationRequest {
   scenario: Scenario;
-  difficulty: number;
   max_turns?: number;
 }
 
@@ -32,7 +31,6 @@ export interface StartConversationResponse {
 export interface SessionStateResponse {
   session_id: string;
   scenario: Scenario;
-  difficulty: number;
   persona: Persona;
   turn_index: number;
   max_turns: number;
@@ -82,7 +80,6 @@ export type WsEvent =
       payload: {
         session_id: string;
         scenario: string;
-        difficulty: number;
         total_turns: number;
         turns: Array<{ turn_index: number; prompt: string; critique: string | null }>;
       };

@@ -41,11 +41,10 @@ class PhaseBSessionManager:
     def create_session(
         self,
         scenario: Scenario,
-        difficulty: int,
         max_turns: int = 4,
     ) -> ActiveConversation:
         session_id = str(uuid4())
-        state = build_initial_state(session_id, scenario, difficulty, max_turns)
+        state = build_initial_state(session_id, scenario, max_turns)
         session = ActiveConversation(session_id=session_id, state=state)
         self._sessions[session_id] = session
         schedule_repository_write(

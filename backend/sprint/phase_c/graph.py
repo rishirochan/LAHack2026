@@ -107,7 +107,7 @@ async def compute_scorecard(state: PhaseCState, config: RunnableConfig) -> dict[
         return {"error": "No merged analysis available for Phase C scorecard generation."}
 
     await _send_event(config, "processing_stage", {"stage": "Computing scorecard"})
-    recording["scorecard"] = build_scorecard(recording["merged_analysis"], manager.get_state(session_id)["difficulty"])
+    recording["scorecard"] = build_scorecard(recording["merged_analysis"])
     return {"error": None}
 
 
@@ -123,7 +123,6 @@ async def generate_written_summary_node(state: PhaseCState, config: RunnableConf
     recording["written_summary"] = await generate_phase_c_summary(
         ai_service=get_ai_service(),
         scorecard_json=json.dumps(recording["scorecard"], ensure_ascii=True),
-        difficulty=session_state["difficulty"],
     )
     return {"error": None}
 

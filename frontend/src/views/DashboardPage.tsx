@@ -2,7 +2,10 @@
 
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Zap, MessageSquare, Mic, ArrowRight } from 'lucide-react';
+import { Zap, MessageSquare, Mic, ArrowRight, Loader2 } from 'lucide-react';
+
+import { useSessionsContext } from '@/context/SessionsContext';
+import { formatSessionDate, formatSessionMeta, scoreBadgeClassName, SESSION_MODE_DISPLAY } from '@/lib/session-display';
 
 const modes = [
   {
@@ -28,36 +31,12 @@ const modes = [
   },
 ];
 
-const recentSessions = [
-  {
-    icon: Zap,
-    name: 'Confidence Sprint',
-    date: 'Apr 22, 2025',
-    score: 84,
-    color: 'text-navy-500',
-  },
-  {
-    icon: MessageSquare,
-    name: 'Interview Practice',
-    date: 'Apr 20, 2025',
-    score: 78,
-    color: 'text-teal-500',
-  },
-  {
-    icon: Mic,
-    name: 'Free Speech: Project Update',
-    date: 'Apr 18, 2025',
-    score: 91,
-    color: 'text-amber-500',
-  },
-];
-
 export default function DashboardPage() {
   const router = useRouter();
+  const { recentSessions, loading, error } = useSessionsContext();
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* Greeting */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -65,14 +44,13 @@ export default function DashboardPage() {
         className="mb-10"
       >
         <h1
-          className="font-['Playfair_Display'] text-[28px] font-semibold text-slate-900 mb-1"
+          className="mb-1 font-['Playfair_Display'] text-2xl font-semibold text-slate-900"
         >
           Good morning, Jordan
         </h1>
         <p className="text-slate-500">What are we working on today?</p>
       </motion.div>
 
-      {/* Mode Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
         {modes.map((mode, i) => (
           <motion.div
@@ -98,7 +76,6 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Recent Sessions */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -108,28 +85,48 @@ export default function DashboardPage() {
           Recent sessions
         </h2>
         <div className="bg-white rounded-2xl border border-cream-300 overflow-hidden shadow-sm">
-          {recentSessions.map((session, i) => (
-            <button
-              key={i}
-              onClick={() => router.push('/replays')}
-              className={`w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-cream-50 transition-colors ${
-                i < recentSessions.length - 1 ? 'border-b border-cream-200' : ''
-              }`}
-            >
-              <div className="w-10 h-10 rounded-xl bg-cream-100 flex items-center justify-center shrink-0">
-                <session.icon size={18} className={session.color} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 truncate">
-                  {session.name}
-                </p>
-                <p className="text-xs text-slate-500">{session.date}</p>
-              </div>
-              <span className="px-3 py-1 rounded-full bg-cream-100 text-xs font-medium text-slate-700 shrink-0">
-                {session.score}
-              </span>
-            </button>
-          ))}
+          {loading && (
+            <div className="flex items-center gap-3 px-5 py-4 text-sm text-slate-600">
+              <Loader2 size={16} className="animate-spin text-navy-500" />
+              Loading recent sessions
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="px-5 py-4 text-sm text-rose-600">{error}</div>
+          )}
+
+          {!loading && !error && recentSessions.length === 0 && (
+            <div className="px-5 py-4 text-sm text-slate-500">
+              No practice sessions yet. Complete a mode to populate this list.
+            </div>
+          )}
+
+          {!loading && !error && recentSessions.slice(0, 5).map((session, index, items) => {
+            const modeDisplay = SESSION_MODE_DISPLAY[session.mode];
+            return (
+              <button
+                key={session.session_id}
+                onClick={() => router.push(`/replays?session=${encodeURIComponent(session.session_id)}`)}
+                className={`w-full flex items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-cream-50 ${
+                  index < items.length - 1 ? 'border-b border-cream-200' : ''
+                }`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cream-100">
+                  <modeDisplay.icon size={18} className={modeDisplay.iconClassName} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-900">{session.label}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {formatSessionDate(session.completed_at || session.updated_at || session.created_at)} · {formatSessionMeta(session)}
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${scoreBadgeClassName(session.score)}`}>
+                  {session.score ?? '--'}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </motion.div>
     </div>

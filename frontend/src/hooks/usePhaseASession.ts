@@ -2,6 +2,8 @@
 
 import { useRef, useState } from 'react';
 
+import { useSessionsContext } from '@/context/SessionsContext';
+
 export const emotionOptions = [
   'Anger',
   'Contempt',
@@ -99,6 +101,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000';
 
 export function usePhaseASession() {
+  const { refetch: refetchSessions } = useSessionsContext();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [status, setStatus] = useState<SessionStatus>('setup');
   const [scenarioPrompt, setScenarioPrompt] = useState('');
@@ -246,6 +249,7 @@ export function usePhaseASession() {
       case 'session_summary':
         setSummary(event.payload as unknown as SessionSummary);
         setStatus('summary');
+        void refetchSessions();
         break;
       case 'error':
         setStatus('error');
@@ -337,4 +341,3 @@ export function usePhaseASession() {
 function getAudioFilename(audioBlob: Blob) {
   return audioBlob.type === 'audio/wav' ? 'phase-a-audio.wav' : 'phase-a-audio.webm';
 }
-

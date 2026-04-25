@@ -275,8 +275,13 @@ def _emotion_analysis_candidates(root: dict[str, Any], modality: str) -> list[An
     if not emotion_analysis:
         return []
 
+    overall_scores = _to_mapping(emotion_analysis.get("overall"))
+    modality_scores = _to_mapping(_nested_get(emotion_analysis, ("overall", modality)))
+    if not modality_scores and all(isinstance(value, int | float) for value in overall_scores.values()):
+        modality_scores = overall_scores
+
     candidates: list[Any] = [
-        _aggregate_emotion_events(_nested_get(emotion_analysis, ("overall", modality)), f"overall_{modality}")
+        _aggregate_emotion_events(modality_scores, f"overall_{modality}")
     ]
     if modality == "video":
         faces = _to_mapping(emotion_analysis.get("faces"))

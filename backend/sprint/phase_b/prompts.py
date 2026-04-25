@@ -27,38 +27,15 @@ PERSONA_DESCRIPTIONS: dict[Persona, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Difficulty scaling
-# ---------------------------------------------------------------------------
-
-DIFFICULTY_MODIFIERS: dict[int, str] = {
-    1: "You are friendly and encouraging, accept most answers warmly.",
-    2: "You are supportive with gentle follow-ups.",
-    3: "You are conversational and mildly probing.",
-    4: "You ask reasonable follow-ups when answers are vague.",
-    5: "You are balanced — professional but fair.",
-    6: "You push back on weak answers with pointed questions.",
-    7: "You probe weak answers with follow-up pressure, you do not accept vague responses.",
-    8: "You are demanding and expect precise, substantive answers.",
-    9: "You are aggressive and challenge every claim with counter-arguments.",
-    10: "You are a hardball interrogator who dismantles weak reasoning immediately.",
-}
-
-
-def _get_difficulty_modifier(difficulty: int) -> str:
-    clamped = max(1, min(10, difficulty))
-    return DIFFICULTY_MODIFIERS.get(clamped, DIFFICULTY_MODIFIERS[5])
-
-
-# ---------------------------------------------------------------------------
 # Prompt generation system prompt
 # ---------------------------------------------------------------------------
 
-def build_prompt_system(scenario: Scenario, persona: Persona, difficulty: int) -> str:
+def build_prompt_system(scenario: Scenario, persona: Persona) -> str:
     """Build the system prompt for the generate_prompt node."""
 
     return (
         f"{PERSONA_DESCRIPTIONS[persona]} "
-        f"Difficulty level {difficulty} of 10: {_get_difficulty_modifier(difficulty)} "
+        "Keep the tone realistic, engaged, and appropriately probing for the scenario. "
         f"Ask one focused question per turn. Keep your question under 3 sentences. "
         f"Do not include any meta-commentary or stage directions."
     )

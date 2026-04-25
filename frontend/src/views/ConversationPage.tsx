@@ -7,7 +7,6 @@ import { Mic, Square, Power, Video, Loader2 } from 'lucide-react';
 import {
   type Scenario,
   type WsEvent,
-  type SessionStateResponse,
   createSession,
   getSession,
   requestNextTurn,
@@ -102,6 +101,7 @@ export default function ConversationPage() {
   const [turnPhase, setTurnPhase] = useState<TurnPhase>('idle');
   const [processingStage, setProcessingStage] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
+  const [hasMediaStream, setHasMediaStream] = useState(false);
 
   // Recording
   const [recordTime, setRecordTime] = useState(0);
@@ -150,6 +150,7 @@ export default function ConversationPage() {
       if (timerRef.current) clearInterval(timerRef.current);
       if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      setHasMediaStream(false);
       wsRef.current?.close();
       audioContextRef.current?.close();
     };
@@ -158,12 +159,6 @@ export default function ConversationPage() {
   // -------------------------------------------------------------------------
   // Audio playback from base64 websocket chunks
   // -------------------------------------------------------------------------
-  const enqueueAudioChunk = useCallback(async (base64: string) => {
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    audioQueueRef.current.push(bytes.buffer);
-    if (!isPlayingAudioRef.current) drainAudioQueue();
-  }, []);
-
   const drainAudioQueue = async () => {
     if (!audioContextRef.current) {
       audioContextRef.current = new AudioContext();
@@ -186,6 +181,14 @@ export default function ConversationPage() {
     }
     isPlayingAudioRef.current = false;
   };
+
+  const enqueueAudioChunk = useCallback(async (base64: string) => {
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    audioQueueRef.current.push(bytes.buffer);
+    if (!isPlayingAudioRef.current) {
+      void drainAudioQueue();
+    }
+  }, []);
 
   // -------------------------------------------------------------------------
   // WebSocket event handler
@@ -277,7 +280,7 @@ export default function ConversationPage() {
     if (!scenario) return;
     setErrorBanner('');
     try {
-      const res = await createSession({ scenario, difficulty: 5, max_turns: 4 });
+      const res = await createSession({ scenario, max_turns: 4 });
       setSessionId(res.session_id);
       setMaxTurns(4);
       setStep(2);
@@ -327,6 +330,7 @@ export default function ConversationPage() {
     if (mediaStreamRef.current) return mediaStreamRef.current;
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     mediaStreamRef.current = stream;
+    setHasMediaStream(true);
     if (previewRef.current) previewRef.current.srcObject = stream;
     return stream;
   };
@@ -350,7 +354,7 @@ export default function ConversationPage() {
       fullVideoRec.start();
       fullAudioRec.start();
 
-      recordStartMsRef.current = Date.now();
+      recordStartMsRef.current = Math.round(window.performance.now());
       chunkIndexRef.current = 0;
       setRecordTime(0);
       setTurnPhase('recording');
@@ -365,7 +369,7 @@ export default function ConversationPage() {
       }, 1000);
 
       // Start first chunk recorder
-      startChunkRecorder(stream, 0);
+      startChunkRecorder(stream);
 
       // Schedule chunk boundaries
       chunkTimerRef.current = setInterval(() => {
@@ -376,7 +380,7 @@ export default function ConversationPage() {
     }
   };
 
-  const startChunkRecorder = (stream: MediaStream, _index: number) => {
+  const startChunkRecorder = (stream: MediaStream) => {
     videoChunksRef.current = [];
     audioChunksRef.current = [];
 
@@ -423,7 +427,7 @@ export default function ConversationPage() {
     }
 
     chunkIndexRef.current = idx + 1;
-    startChunkRecorder(stream, idx + 1);
+    startChunkRecorder(stream);
   };
 
   const stopRecording = async () => {
@@ -437,7 +441,7 @@ export default function ConversationPage() {
     // Finalize the last partial chunk
     const lastIdx = chunkIndexRef.current;
     const lastStartMs = lastIdx * CHUNK_DURATION_MS;
-    const elapsed = Date.now() - recordStartMsRef.current;
+    const elapsed = Math.round(window.performance.now() - recordStartMsRef.current);
     const lastEndMs = Math.max(lastStartMs + 1, elapsed);
 
     // Stop chunk recorders
@@ -559,7 +563,7 @@ export default function ConversationPage() {
   // RENDER
   // -------------------------------------------------------------------------
   return (
-    <div className="h-[calc(100vh-64px)] flex flex-col">
+    <div className="flex min-h-[calc(100vh-64px)] flex-col">
       {/* Header */}
       <div className="mb-4 shrink-0">
         <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
@@ -631,7 +635,7 @@ export default function ConversationPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex-1 flex gap-4 overflow-hidden"
+            className="flex min-h-0 flex-1 gap-4 overflow-hidden"
           >
             {/* Chat Thread — 65% */}
             <div className="flex-[65] flex flex-col bg-white rounded-2xl border border-cream-300 overflow-hidden shadow-sm">
@@ -741,7 +745,7 @@ export default function ConversationPage() {
                   {turnPhase === 'turn_done' && turnIndex < maxTurns && (
                     <button
                       onClick={handleNextTurn}
-                      className="px-4 py-2 rounded-full bg-navy-500 text-white text-sm font-medium hover:bg-navy-600 transition-colors"
+                      className="px-4 py-2 rounded-full bg-navy-500 text-white text-sm font-semibold hover:bg-navy-600 transition-colors"
                     >
                       Next prompt →
                     </button>
@@ -749,7 +753,7 @@ export default function ConversationPage() {
                   {turnPhase === 'turn_done' && turnIndex >= maxTurns && (
                     <button
                       onClick={handleEndSession}
-                      className="px-4 py-2 rounded-full bg-navy-500 text-white text-sm font-medium hover:bg-navy-600 transition-colors"
+                      className="px-4 py-2 rounded-full bg-navy-500 text-white text-sm font-semibold hover:bg-navy-600 transition-colors"
                     >
                       View summary
                     </button>
@@ -759,7 +763,7 @@ export default function ConversationPage() {
             </div>
 
             {/* Live Analysis Sidebar — 35% */}
-            <div className="flex-[35] flex flex-col gap-4">
+            <div className="flex-[35] min-h-0 flex flex-col gap-4 overflow-y-auto pr-1">
               {/* Webcam preview */}
               <div className="bg-white rounded-2xl border border-cream-300 p-4 shadow-sm">
                 <div className="flex items-center gap-2 mb-3">
@@ -775,7 +779,7 @@ export default function ConversationPage() {
                   playsInline
                   className="aspect-[4/3] w-full rounded-xl bg-slate-100 object-cover"
                 />
-                {!mediaStreamRef.current && (
+                {!hasMediaStream && (
                   <button
                     onClick={acquireMedia}
                     className="mt-2 w-full rounded-lg bg-cream-50 border border-cream-300 py-2 text-xs text-slate-500 hover:bg-cream-100 transition-colors"
@@ -906,7 +910,7 @@ export default function ConversationPage() {
                     setErrorBanner('');
                     wsRef.current?.close();
                   }}
-                  className="px-6 py-3 rounded-full bg-navy-500 text-white text-sm font-medium hover:bg-navy-600 shadow-md transition-colors"
+                  className="px-6 py-3 rounded-full bg-navy-500 text-white text-sm font-semibold hover:bg-navy-600 shadow-sm transition-colors"
                 >
                   Start new session
                 </button>

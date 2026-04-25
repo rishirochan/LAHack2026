@@ -3,17 +3,19 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/auth/AuthProvider';
+import { useSessionsContext } from '@/context/SessionsContext';
 import { useSidebar } from '@/context/SidebarContext';
+import { formatSessionDate, SESSION_MODE_DISPLAY } from '@/lib/session-display';
 import {
   Home,
   PlayCircle,
   Zap,
   MessageSquare,
   Mic,
-  FileText,
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Loader2,
 } from 'lucide-react';
 
 const navItems = [
@@ -27,17 +29,12 @@ const practiceItems = [
   { icon: Mic, label: 'Free Speaking', path: '/free' },
 ];
 
-const recentSessions = [
-  { name: 'Confidence Sprint — Apr 22' },
-  { name: 'Interview Practice — Apr 20' },
-  { name: 'Free Speech — Apr 18' },
-];
-
 export default function Sidebar() {
   const { expanded, toggleSidebar } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
   const { logout } = useAuth();
+  const { recentSessions, loading, error } = useSessionsContext();
 
   const isActive = (path: string) => pathname === path;
 
@@ -117,15 +114,40 @@ export default function Sidebar() {
       )}
       {expanded && (
         <div className="flex flex-col gap-1">
-          {recentSessions.map((session, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 px-5 py-2 text-xs text-slate-500"
-            >
-              <FileText size={14} />
-              <span className="truncate">{session.name}</span>
+          {loading && (
+            <div className="flex items-center gap-3 px-5 py-2 text-xs text-slate-500">
+              <Loader2 size={14} className="animate-spin" />
+              <span>Loading sessions</span>
             </div>
-          ))}
+          )}
+          {!loading && error && (
+            <div className="px-5 py-2 text-xs text-rose-600">
+              {error}
+            </div>
+          )}
+          {!loading && !error && recentSessions.length === 0 && (
+            <div className="px-5 py-2 text-xs text-slate-500">
+              No sessions yet
+            </div>
+          )}
+          {!loading && !error && recentSessions.slice(0, 4).map((session) => {
+            const modeDisplay = SESSION_MODE_DISPLAY[session.mode];
+            return (
+              <Link
+                key={session.session_id}
+                href={`/replays?session=${encodeURIComponent(session.session_id)}`}
+                className="flex items-start gap-3 rounded-xl px-3 py-2 mx-2 text-xs text-slate-500 transition-colors hover:bg-cream-200 hover:text-slate-900"
+              >
+                <modeDisplay.icon size={14} className={`${modeDisplay.iconClassName} mt-0.5 shrink-0`} />
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-slate-700">{session.label}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                    {formatSessionDate(session.completed_at || session.updated_at || session.created_at)}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       )}
 
