@@ -24,6 +24,19 @@ from backend.sprint.phase_b.schemas import (
 )
 from backend.sprint.phase_b.graph import critique_graph, end_graph, prompt_graph
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
+from backend.sprint.phase_c.constants import (
+    PHASE_C_MAX_SECONDS,
+    PHASE_C_MIN_SECONDS,
+    RETRY_EMPTY_MESSAGE as PHASE_C_RETRY_EMPTY_MESSAGE,
+    RETRY_INVALID_CHUNKS_MESSAGE as PHASE_C_RETRY_INVALID_CHUNKS_MESSAGE,
+)
+from backend.sprint.phase_c.graph import phase_c_graph
+from backend.sprint.phase_c.schemas import (
+    PhaseCSessionStateResponse,
+    StartPhaseCSessionRequest,
+    StartPhaseCSessionResponse,
+)
+from backend.sprint.phase_c.session_manager import get_phase_c_manager
 
 
 app = FastAPI(title="LAHacks 2026 Backend")
@@ -500,3 +513,202 @@ async def _soft_result(awaitable):
         return await awaitable
     except Exception:
         return []
+
+
+# ======================================================================
+# Phase C — Speak Freely
+# ======================================================================
+
+@app.post("/api/phase-c/sessions", response_model=StartPhaseCSessionResponse)
+async def start_phase_c_session(request: StartPhaseCSessionRequest) -> StartPhaseCSessionResponse:
+    session = get_phase_c_manager().create_session(request.difficulty)
+    return StartPhaseCSessionResponse(session_id=session.session_id)
+
+
+@app.get("/api/phase-c/sessions/{session_id}", response_model=PhaseCSessionStateResponse)
+async def get_phase_c_session(session_id: str) -> PhaseCSessionStateResponse:
+    try:
+        state = get_phase_c_manager().get_state(session_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return PhaseCSessionStateResponse(
+        session_id=state["session_id"],
+        difficulty=state["difficulty"],
+        status=state["status"],
+        current_recording=state.get("current_recording"),
+        completed_recording=state.get("completed_recording"),
+    )
+
+
+@app.websocket("/api/phase-c/ws/{session_id}")
+async def phase_c_websocket(websocket: WebSocket, session_id: str) -> None:
+    try:
+        await get_phase_c_manager().bind_websocket(session_id, websocket)
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        get_phase_c_manager().unbind_websocket(session_id)
+    except RuntimeError:
+        await websocket.close(code=1008)
+
+
+@app.post("/api/phase-c/sessions/{session_id}/recording/start")
+async def phase_c_start_recording(session_id: str) -> dict[str, str]:
+    try:
+        get_phase_c_manager().start_recording(session_id)
+        await get_phase_c_manager().send_event(
+            session_id,
+            "recording_ready",
+            {"max_seconds": PHASE_C_MAX_SECONDS},
+        )
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"status": "recording_ready"}
+
+
+@app.post("/api/phase-c/sessions/{session_id}/chunks")
+async def phase_c_upload_chunk(
+    session_id: str,
+    video_file: UploadFile = File(...),
+    audio_file: UploadFile = File(...),
+    chunk_index: int = Form(...),
+    start_ms: int = Form(...),
+    end_ms: int = Form(...),
+    mediapipe_metrics: str = Form(default="{}"),
+) -> dict[str, str]:
+    import json as _json
+
+    try:
+        get_phase_c_manager().get_state(session_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    if chunk_index < 0:
+        raise HTTPException(status_code=400, detail="Chunk index must be non-negative.")
+    if start_ms < 0:
+        raise HTTPException(status_code=400, detail="Chunk start_ms must be non-negative.")
+    if end_ms <= start_ms:
+        raise HTTPException(status_code=400, detail="Chunk end_ms must be greater than start_ms.")
+    if get_phase_c_manager().has_chunk(session_id, chunk_index):
+        raise HTTPException(status_code=409, detail=f"Chunk {chunk_index} has already been uploaded.")
+
+    video_path = await _save_upload(video_file, suffix=".webm")
+    audio_path = await _save_upload(audio_file, suffix=".webm")
+    if Path(video_path).stat().st_size == 0 or Path(audio_path).stat().st_size == 0:
+        raise HTTPException(status_code=400, detail="Chunk uploads must contain non-empty audio and video.")
+
+    try:
+        mp_metrics = _json.loads(mediapipe_metrics)
+    except _json.JSONDecodeError:
+        mp_metrics = {}
+
+    get_phase_c_manager().add_chunk(
+        session_id,
+        {
+            "chunk_index": chunk_index,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "mediapipe_metrics": mp_metrics,
+            "video_emotions": None,
+            "audio_emotions": None,
+            "status": "pending",
+        },
+    )
+    asyncio.create_task(_process_phase_c_chunk(session_id, chunk_index, video_path, audio_path))
+    return {"status": "accepted", "chunk_index": str(chunk_index)}
+
+
+@app.post("/api/phase-c/sessions/{session_id}/transcribe")
+async def phase_c_transcribe(session_id: str, audio_file: UploadFile = File(...)) -> dict[str, object]:
+    try:
+        get_phase_c_manager().get_state(session_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    audio_path = await _save_upload(audio_file, suffix=".webm")
+    if Path(audio_path).stat().st_size == 0:
+        await get_phase_c_manager().send_event(
+            session_id,
+            "retry_recording",
+            {"message": PHASE_C_RETRY_EMPTY_MESSAGE},
+        )
+        raise HTTPException(status_code=409, detail=PHASE_C_RETRY_EMPTY_MESSAGE)
+
+    from backend.shared.ai import get_ai_service
+    from backend.sprint.phase_c.elevenlabs import transcribe_audio
+
+    transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+    get_phase_c_manager().store_transcript(session_id, transcript, words)
+    return {"transcript": transcript, "word_count": len(words)}
+
+
+@app.post("/api/phase-c/sessions/{session_id}/complete")
+async def phase_c_complete(session_id: str) -> dict[str, str]:
+    try:
+        state = get_phase_c_manager().get_state(session_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    is_valid, validation_error, recording_window = get_phase_c_manager().validate_recording(
+        session_id,
+        min_seconds=PHASE_C_MIN_SECONDS,
+        max_seconds=PHASE_C_MAX_SECONDS,
+    )
+    if not is_valid:
+        await get_phase_c_manager().send_event(
+            session_id,
+            "retry_recording",
+            {"message": validation_error or PHASE_C_RETRY_INVALID_CHUNKS_MESSAGE},
+        )
+        raise HTTPException(status_code=409, detail=validation_error or PHASE_C_RETRY_INVALID_CHUNKS_MESSAGE)
+    if recording_window is None:
+        raise HTTPException(status_code=500, detail="Recording window could not be determined.")
+
+    get_phase_c_manager().set_recording_window(
+        session_id,
+        recording_window["recording_start_ms"],
+        recording_window["recording_end_ms"],
+    )
+    await phase_c_graph.ainvoke(state, config={"configurable": {"session_id": session_id}})
+    return {"status": "complete"}
+
+
+async def _process_phase_c_chunk(
+    session_id: str,
+    chunk_index: int,
+    video_path: str,
+    audio_path: str,
+) -> None:
+    from backend.shared.ai import get_settings
+    from backend.sprint.phase_c.imentiv import (
+        get_audio_emotions,
+        get_video_emotions,
+        upload_audio,
+        upload_video,
+    )
+
+    manager = get_phase_c_manager()
+    settings = get_settings()
+
+    try:
+        manager.update_chunk(session_id, chunk_index, {"status": "processing"})
+        video_id, audio_id = await asyncio.gather(
+            upload_video(settings, video_path),
+            upload_audio(settings, audio_path),
+        )
+        video_emotions, audio_emotions = await asyncio.gather(
+            _soft_result(get_video_emotions(settings, video_id)),
+            _soft_result(get_audio_emotions(settings, audio_id)),
+        )
+        manager.update_chunk(
+            session_id,
+            chunk_index,
+            {
+                "video_emotions": video_emotions if isinstance(video_emotions, list) else [],
+                "audio_emotions": audio_emotions if isinstance(audio_emotions, list) else [],
+                "status": "done",
+            },
+        )
+    except Exception:
+        manager.update_chunk(session_id, chunk_index, {"status": "failed"})
