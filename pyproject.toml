@@ -4,4 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "elevenlabs",
+    "fastapi",
+    "langchain",
+    "langchain-core",
+    "langchain-openai",
+    "langgraph",
+    "openai",
+    "pydantic-settings",
+    "python-dotenv",
+]
