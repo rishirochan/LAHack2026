@@ -158,9 +158,12 @@ class InMemorySessionRepository:
                 "completed_at": now if state.get("status") == "complete" else None,
                 "setup": {
                     "scenario": state.get("scenario"),
+                    "scenario_preference": state.get("scenario_preference"),
                     "difficulty": state.get("difficulty"),
                     "max_turns": state.get("max_turns"),
-                    "persona": state.get("persona"),
+                    "minimum_turns": state.get("minimum_turns"),
+                    "peer_profile": state.get("peer_profile"),
+                    "starter_topic": state.get("starter_topic"),
                 },
                 "summary": _phase_b_summary(state),
                 "media_refs": _phase_b_media_refs(state),
@@ -194,9 +197,12 @@ class InMemorySessionRepository:
                     "completed_at": _now() if status == "complete" else document.get("completed_at"),
                     "setup": {
                         "scenario": state.get("scenario"),
+                        "scenario_preference": state.get("scenario_preference"),
                         "difficulty": state.get("difficulty"),
                         "max_turns": state.get("max_turns"),
-                        "persona": state.get("persona"),
+                        "minimum_turns": state.get("minimum_turns"),
+                        "peer_profile": state.get("peer_profile"),
+                        "starter_topic": state.get("starter_topic"),
                     },
                     "summary": _phase_b_summary(state),
                     "media_refs": _phase_b_media_refs(state),
@@ -372,9 +378,12 @@ class MongoSessionRepository:
                     "updated_at": now,
                     "setup": {
                         "scenario": state.get("scenario"),
+                        "scenario_preference": state.get("scenario_preference"),
                         "difficulty": state.get("difficulty"),
                         "max_turns": state.get("max_turns"),
-                        "persona": state.get("persona"),
+                        "minimum_turns": state.get("minimum_turns"),
+                        "peer_profile": state.get("peer_profile"),
+                        "starter_topic": state.get("starter_topic"),
                     },
                     "summary": _phase_b_summary(state),
                     "media_refs": _phase_b_media_refs(state),
@@ -399,9 +408,12 @@ class MongoSessionRepository:
                 "completed_at": _now() if status == "complete" else None,
                 "setup": {
                     "scenario": state.get("scenario"),
+                    "scenario_preference": state.get("scenario_preference"),
                     "difficulty": state.get("difficulty"),
                     "max_turns": state.get("max_turns"),
-                    "persona": state.get("persona"),
+                    "minimum_turns": state.get("minimum_turns"),
+                    "peer_profile": state.get("peer_profile"),
+                    "starter_topic": state.get("starter_topic"),
                 },
                 "summary": _phase_b_summary(state),
                 "media_refs": _phase_b_media_refs(state),
@@ -583,12 +595,18 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "session_id": state.get("session_id"),
         "scenario": state.get("scenario"),
+        "scenario_preference": state.get("scenario_preference"),
         "difficulty": state.get("difficulty"),
         "status": state.get("status"),
+        "starter_topic": state.get("starter_topic"),
+        "peer_profile": _json_safe(state.get("peer_profile")),
+        "minimum_turns": state.get("minimum_turns"),
         "total_turns": len(turns),
         "avg_eye_contact_pct": round(sum(eye_contacts) / len(eye_contacts), 1) if eye_contacts else None,
         "dominant_video_emotion": dominant_video,
         "dominant_audio_emotion": dominant_audio,
+        "momentum_decision": _json_safe(state.get("momentum_decision")),
+        "final_report": _json_safe(state.get("final_report")),
         "chunks_failed": sum(
             int((summary.get("overall") or {}).get("chunks_failed") or 0)
             for summary in merged_summaries
@@ -603,7 +621,8 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
             {
                 "turn_index": turn.get("turn_index"),
                 "prompt": turn.get("prompt_text"),
-                "critique": turn.get("critique"),
+                "analysis_status": turn.get("analysis_status"),
+                "turn_analysis": _json_safe(turn.get("turn_analysis")),
             }
             for turn in turns
         ],

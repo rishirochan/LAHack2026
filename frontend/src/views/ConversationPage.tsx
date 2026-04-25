@@ -1,403 +1,765 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Mic, MicOff, Power } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, Mic, Power, RotateCcw, Square, Video } from 'lucide-react';
+import {
+  type ConversationTurn,
+  type FinalReport,
+  type TurnAnalysis,
+  usePhaseBConversation,
+} from '@/hooks/usePhaseBConversation';
 
-type Mode = 'interview' | 'negotiation' | 'coffee';
+const difficultyOptions = [
+  { label: 'Warm', value: 3, description: 'Friendly, easy social momentum.' },
+  { label: 'Balanced', value: 5, description: 'Natural but a little probing.' },
+  { label: 'Sharp', value: 8, description: 'More pressure, less free help.' },
+] as const;
 
-const modeData: Record<
-  Mode,
-  { label: string; description: string; color: string }
-> = {
-  interview: {
-    label: 'Interview',
-    description: 'Practice answering tough questions under pressure',
-    color: 'border-navy-500',
-  },
-  negotiation: {
-    label: 'Negotiation / Sales',
-    description: 'Hone your persuasion and deal-making skills',
-    color: 'border-teal-500',
-  },
-  coffee: {
-    label: 'Coffee Chat',
-    description: 'Build rapport and practice casual networking',
-    color: 'border-amber-500',
-  },
-};
-
-const aiResponses: Record<Mode, string[]> = {
-  interview: [
-    "Tell me about a time you had to convince someone to see things your way.",
-    "What's your biggest professional weakness, and how are you working on it?",
-    "Describe a project that failed. What did you learn?",
-    "Why should we hire you over other qualified candidates?",
-    "Where do you see yourself in five years?",
-  ],
-  negotiation: [
-    "The budget for this project is firm at $50K. Can you deliver within that?",
-    "I'm not sure your solution is worth the premium you're asking for.",
-    "We need a 30-day delivery, but your timeline says 60. What can you do?",
-    "The competitor quoted us 20% less. Can you match that?",
-    "I love the proposal, but I need approval from three other stakeholders.",
-  ],
-  coffee: [
-    "So, what got you interested in this field in the first place?",
-    "I'm curious — what's the most exciting project you're working on right now?",
-    "How do you usually stay productive during busy weeks?",
-    "If you could give your younger self one piece of career advice, what would it be?",
-    "What's something you're learning outside of work these days?",
-  ],
-};
-
-const tips = [
-  'Maintain steady eye contact with the camera',
-  'Use pauses strategically — silence builds authority',
-  'Mirror the other person\'s energy level',
-  'Avoid filler words like "um" and "like"',
-  'Lean slightly forward to show engagement',
-];
-
-interface Message {
-  id: number;
-  role: 'ai' | 'user';
-  text: string;
-}
+const MIN_RECORDING_SECONDS = 2;
 
 export default function ConversationPage() {
-  const router = useRouter();
-  const [step, setStep] = useState<1 | 2>(1);
-  const [mode, setMode] = useState<Mode | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [micOn, setMicOn] = useState(false);
-  const [meters, setMeters] = useState({
-    confidence: 65,
-    arousal: 40,
-    positivity: 70,
-    eyeContact: 80,
-  });
-  const [currentTip, setCurrentTip] = useState(0);
-  const [fillerWords, setFillerWords] = useState<string[]>([]);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const meterRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tipRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [difficulty, setDifficulty] = useState<number>(difficultyOptions[1].value);
+  const [isRecording, setIsRecording] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState(45);
+  const [localError, setLocalError] = useState('');
+  const previewRef = useRef<HTMLVideoElement | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+  const wavAudioRecorderRef = useRef<WavAudioRecorder | null>(null);
+  const videoChunksRef = useRef<Blob[]>([]);
+  const startedAtRef = useRef<number>(0);
+  const timerRef = useRef<number | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const {
+    status,
+    scenario,
+    peerProfile,
+    starterTopic,
+    currentTurn,
+    turns,
+    finalReport,
+    processingStage,
+    errorMessage,
+    maxRecordingSeconds,
+    isPeerSpeaking,
+    startSession,
+    submitTurn,
+    endSession,
+    resetAll,
+  } = usePhaseBConversation();
 
-  const startConversation = () => {
-    if (!mode) return;
-    setStep(2);
-    const firstMessage: Message = {
-      id: 1,
-      role: 'ai',
-      text: aiResponses[mode][0],
-    };
-    setMessages([firstMessage]);
-  };
+  const activeError = localError || errorMessage;
+  const conversationTurns = useMemo(() => {
+    return currentTurn ? [...turns, currentTurn] : turns;
+  }, [currentTurn, turns]);
+  const showPeerTypingBubble =
+    status === 'starting' ||
+    (status === 'processing' && processingStage === 'Generating the next step');
 
-  const sendMessage = () => {
-    if (!input.trim() || !mode) return;
-    const userMsg: Message = {
-      id: Date.now(),
-      role: 'user',
-      text: input.trim(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput('');
-    setIsTyping(true);
-
-    // Simulate filler words
-    const words = input.toLowerCase().split(/\s+/);
-    const fillers = words.filter((w) =>
-      ['um', 'uh', 'like', 'you know', 'so', 'actually'].includes(w)
-    );
-    if (fillers.length > 0) {
-      setFillerWords((prev) => [...prev, ...fillers]);
+  async function handleStart() {
+    setLocalError('');
+    try {
+      await startSession(difficulty);
+    } catch (error) {
+      setLocalError(getErrorMessage(error, 'Failed to start the conversation.'));
     }
+  }
 
-    // AI responds after delay
-    setTimeout(() => {
-      const responses = aiResponses[mode];
-      const nextResponse = responses[Math.floor(Math.random() * responses.length)];
-      const aiMsg: Message = {
-        id: Date.now() + 1,
-        role: 'ai',
-        text: nextResponse,
+  async function handleEnd() {
+    setLocalError('');
+    try {
+      await endSession();
+    } catch {
+      setLocalError('Could not finish the session cleanly.');
+    }
+  }
+
+  async function toggleRecording() {
+    if (isRecording) {
+      await stopRecording();
+      return;
+    }
+    await startRecording();
+  }
+
+  async function startRecording() {
+    try {
+      setLocalError('');
+      const stream = await ensurePreviewStream();
+      videoChunksRef.current = [];
+      const videoRecorder = new MediaRecorder(stream, {
+        mimeType: getSupportedMimeType(['video/webm;codecs=vp8,opus', 'video/webm']),
+      });
+      const wavAudioRecorder = createWavAudioRecorder(stream);
+
+      videoRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          videoChunksRef.current.push(event.data);
+        }
       };
-      setMessages((prev) => [...prev, aiMsg]);
-      setIsTyping(false);
-    }, 1800);
-  };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
+      videoRecorderRef.current = videoRecorder;
+      wavAudioRecorderRef.current = wavAudioRecorder;
+      startedAtRef.current = window.performance.now();
+      setSecondsRemaining(maxRecordingSeconds);
+      setIsRecording(true);
+      videoRecorder.start();
+      wavAudioRecorder.start();
+      startCountdown();
+    } catch {
+      setLocalError('Camera or microphone access was blocked. Allow access and try again.');
     }
-  };
+  }
 
-  // Live meters
-  useEffect(() => {
-    if (step === 2) {
-      meterRef.current = setInterval(() => {
-        setMeters({
-          confidence: Math.floor(50 + Math.random() * 40),
-          arousal: Math.floor(30 + Math.random() * 50),
-          positivity: Math.floor(45 + Math.random() * 45),
-          eyeContact: Math.floor(60 + Math.random() * 35),
-        });
-      }, 4000);
+  async function stopRecording() {
+    stopTimer();
+    setIsRecording(false);
+    const durationMs = window.performance.now() - startedAtRef.current;
+    const durationSeconds = durationMs / 1000;
 
-      tipRef.current = setInterval(() => {
-        setCurrentTip((prev) => (prev + 1) % tips.length);
-      }, 5000);
+    if (durationSeconds < MIN_RECORDING_SECONDS) {
+      stopRecordersWithoutUpload(videoRecorderRef.current, wavAudioRecorderRef.current);
+      setLocalError('That recording was too short. Try again with a full response.');
+      return;
     }
-    return () => {
-      if (meterRef.current) clearInterval(meterRef.current);
-      if (tipRef.current) clearInterval(tipRef.current);
-    };
-  }, [step]);
 
-  // Auto-scroll
+    const [videoBlob, audioBlob] = await Promise.all([
+      stopRecorder(videoRecorderRef.current, videoChunksRef.current, 'video/webm'),
+      stopWavAudioRecorder(wavAudioRecorderRef.current),
+    ]);
+
+    wavAudioRecorderRef.current = null;
+    try {
+      await submitTurn(videoBlob, audioBlob, durationMs);
+    } catch {
+      setLocalError('Could not submit that turn. Please try again.');
+    }
+  }
+
+  async function ensurePreviewStream() {
+    const existingStream = mediaStreamRef.current;
+    if (existingStream) {
+      if (previewRef.current) {
+        previewRef.current.srcObject = existingStream;
+      }
+      return existingStream;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    mediaStreamRef.current = stream;
+    if (previewRef.current) {
+      previewRef.current.srcObject = stream;
+    }
+    return stream;
+  }
+
+  function startCountdown() {
+    stopTimer();
+    timerRef.current = window.setInterval(() => {
+      const elapsed = Math.floor((window.performance.now() - startedAtRef.current) / 1000);
+      const remaining = Math.max(maxRecordingSeconds - elapsed, 0);
+      setSecondsRemaining(remaining);
+      if (remaining === 0) {
+        void stopRecording();
+      }
+    }, 250);
+  }
+
+  function stopTimer() {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  function stopTracks() {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+  }
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
+  }, [conversationTurns, processingStage, status]);
 
-  return (
-    <div className="h-[calc(100vh-64px)] flex flex-col">
-      {/* Header */}
-      <div className="mb-4 shrink-0">
-        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-          Conversation Practice
-        </h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Simulate real conversations and get live feedback
-        </p>
-      </div>
+  useEffect(() => {
+    if (status !== 'setup') {
+      void ensurePreviewStream();
+    }
+  }, [status]);
 
-      <AnimatePresence mode="wait">
-        {step === 1 && (
-          <motion.div
-            key="step1"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="flex-1"
-          >
-            <h2 className="text-sm font-medium text-slate-700 mb-4">
-              Select a conversation mode
+  useEffect(() => {
+    setSecondsRemaining(maxRecordingSeconds);
+  }, [maxRecordingSeconds]);
+
+  useEffect(() => {
+    return () => {
+      stopTimer();
+      wavAudioRecorderRef.current?.discard();
+      stopTracks();
+    };
+  }, []);
+
+  if (status === 'setup') {
+    return (
+      <div className="mx-auto max-w-5xl space-y-6">
+        <div>
+          <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+            Conversation Practice
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Talk with a generated peer, respond on camera, and get a balanced conversation report.
+          </p>
+        </div>
+
+        <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">
+              Session Shape
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              {(Object.keys(modeData) as Mode[]).map((m) => (
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              We generate the peer and topic automatically. Each turn is one short camera response, fast
+              transcription drives the next reply, and video analysis keeps running in the background.
+            </p>
+
+            <div className="mt-8 space-y-3">
+              {difficultyOptions.map((option) => (
                 <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  className={`bg-white rounded-2xl border-2 p-6 text-left transition-all duration-200 hover:shadow-md ${
-                    mode === m
-                      ? `${modeData[m].color} shadow-md`
-                      : 'border-cream-300'
+                  key={option.value}
+                  type="button"
+                  onClick={() => setDifficulty(option.value)}
+                  className={`flex w-full items-start justify-between rounded-2xl border px-4 py-4 text-left transition ${
+                    difficulty === option.value
+                      ? 'border-navy-500 bg-navy-50'
+                      : 'border-cream-200 bg-white hover:border-cream-300'
                   }`}
                 >
-                  <h3 className="font-semibold text-slate-900 mb-1">
-                    {modeData[m].label}
-                  </h3>
-                  <p className="text-sm text-slate-500">
-                    {modeData[m].description}
-                  </p>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                    <p className="mt-1 text-sm text-slate-500">{option.description}</p>
+                  </div>
+                  <span className="rounded-full bg-cream-100 px-3 py-1 text-xs font-medium text-slate-600">
+                    {option.value}/10
+                  </span>
                 </button>
               ))}
             </div>
+
+            <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+              Camera video and microphone audio are uploaded for analysis during the session. Media is stored
+              as session-linked files rather than inside the session document itself.
+            </div>
+
             <button
-              disabled={!mode}
-              onClick={startConversation}
-              className={`px-6 py-3 rounded-full font-medium text-sm transition-all ${
-                mode
-                  ? 'bg-navy-500 text-white hover:bg-navy-600 shadow-md'
-                  : 'bg-cream-200 text-slate-400 cursor-not-allowed'
+              type="button"
+              onClick={handleStart}
+              className="mt-8 rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition hover:bg-navy-600"
+            >
+              Start Conversation
+            </button>
+          </div>
+
+          <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">
+              What Gets Scored
+            </h2>
+            <div className="mt-4 space-y-3 text-sm text-slate-600">
+              <MetricRow label="Conversation momentum" />
+              <MetricRow label="Content quality" />
+              <MetricRow label="Emotional delivery" />
+              <MetricRow label="Energy matching" />
+              <MetricRow label="Authenticity" />
+              <MetricRow label="Follow-up invitation" />
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid h-[calc(100vh-64px)] gap-4 lg:grid-cols-[1.25fr_0.75fr]">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-cream-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-cream-200 px-5 py-4">
+          <div>
+            <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+              {peerProfile ? `${peerProfile.name} is on the line` : 'Starting the conversation'}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {peerProfile
+                ? `${peerProfile.role} • ${scenario ?? peerProfile.scenario} • topic: ${starterTopic ?? 'loading'}`
+                : 'Generating a peer and opening topic.'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <StatusPill
+              label={
+                status === 'processing'
+                  ? processingStage || 'Processing'
+                  : status === 'recording'
+                    ? 'Your turn'
+                    : status === 'listening'
+                      ? 'Peer speaking'
+                      : status === 'complete'
+                        ? 'Session complete'
+                        : 'Starting'
+              }
+              tone={status === 'error' ? 'error' : status === 'complete' ? 'success' : 'default'}
+            />
+            <button
+              type="button"
+              onClick={handleEnd}
+              disabled={status === 'complete' || status === 'starting'}
+              className="inline-flex items-center gap-2 rounded-full border border-cream-300 px-4 py-2 text-sm text-slate-700 transition hover:bg-cream-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Power className="h-4 w-4" />
+              End
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+          {conversationTurns.map((turn) => (
+            <TurnTranscript key={turn.turn_index} turn={turn} />
+          ))}
+          {showPeerTypingBubble && <PeerTypingBubble />}
+          {status === 'processing' && (
+            <div className="flex justify-center">
+              <div className="inline-flex items-center gap-2 rounded-full bg-cream-100 px-4 py-2 text-sm text-slate-600">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {processingStage || 'Processing your turn'}
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        <div className="border-t border-cream-200 px-5 py-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleRecording}
+              disabled={status !== 'recording' && !isRecording}
+              className={`inline-flex h-12 min-w-[160px] items-center justify-center gap-2 rounded-full px-5 text-sm font-medium transition ${
+                isRecording
+                  ? 'bg-red-500 text-white hover:bg-red-600'
+                  : 'bg-navy-500 text-white hover:bg-navy-600 disabled:bg-slate-300'
               }`}
             >
-              Begin conversation →
+              {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              {isRecording ? 'Stop recording' : 'Record response'}
             </button>
-          </motion.div>
+
+            <p className="text-sm text-slate-500">
+              {isRecording
+                ? `${secondsRemaining}s remaining`
+                : status === 'recording'
+                  ? `Keep it between ${MIN_RECORDING_SECONDS} and ${maxRecordingSeconds} seconds.`
+                  : isPeerSpeaking
+                    ? 'Wait for the peer audio to finish.'
+                    : 'The next recording window will open automatically.'}
+            </p>
+          </div>
+
+          {activeError && (
+            <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{activeError}</p>
+          )}
+        </div>
+      </section>
+
+      <aside className="flex min-h-0 flex-col gap-4">
+        <section className="rounded-3xl border border-cream-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Video className="h-4 w-4 text-navy-500" />
+            Camera Preview
+          </div>
+          <video
+            ref={previewRef}
+            autoPlay
+            muted
+            playsInline
+            className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
+          />
+        </section>
+
+        <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Peer Profile</h2>
+          {peerProfile ? (
+            <div className="mt-4 space-y-3 text-sm text-slate-600">
+              <InfoPair label="Name" value={peerProfile.name} />
+              <InfoPair label="Role" value={peerProfile.role} />
+              <InfoPair label="Vibe" value={peerProfile.vibe} />
+              <InfoPair label="Energy" value={peerProfile.energy} />
+              <InfoPair label="Goal" value={peerProfile.conversation_goal} />
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">Generating the peer and topic.</p>
+          )}
+        </section>
+
+        {status === 'complete' && finalReport ? (
+          <FinalReportCard finalReport={finalReport} onReset={resetAll} />
+        ) : (
+          <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Latest Turn</h2>
+            {turns.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">
+                Once you complete a few turns, the local analysis will show up here.
+              </p>
+            ) : (
+              <TurnAnalysisCard turnAnalysis={turns[turns.length - 1].turn_analysis ?? null} />
+            )}
+          </section>
         )}
 
-        {step === 2 && (
-          <motion.div
-            key="step2"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex-1 flex gap-4 overflow-hidden"
+        {status === 'error' && (
+          <button
+            type="button"
+            onClick={resetAll}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-navy-600"
           >
-            {/* Chat Thread — 65% */}
-            <div className="flex-[65] flex flex-col bg-white rounded-2xl border border-cream-300 overflow-hidden shadow-sm">
-              {/* Chat mode header */}
-              <div className="px-5 py-3 border-b border-cream-200 flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-700">
-                  {mode && modeData[mode].label}
-                </span>
-                <button
-                  onClick={() => router.push('/replays')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-50 text-red-500 text-xs font-medium hover:bg-red-100 transition-colors"
-                >
-                  <Power size={12} /> End session
-                </button>
-              </div>
-
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${
-                      msg.role === 'user' ? 'justify-end' : 'justify-start'
-                    }`}
-                  >
-                    <div
-                      className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-                        msg.role === 'user'
-                          ? 'bg-navy-500 text-white rounded-br-md'
-                          : 'bg-cream-50 border border-cream-300 text-slate-800 rounded-bl-md'
-                      }`}
-                    >
-                      {msg.text}
-                    </div>
-                  </div>
-                ))}
-                {isTyping && (
-                  <div className="flex justify-start">
-                    <div className="bg-cream-50 border border-cream-300 rounded-2xl rounded-bl-md px-4 py-3">
-                      <div className="flex gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" />
-                        <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.15s' }} />
-                        <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.3s' }} />
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              {/* Input */}
-              <div className="px-5 py-3 border-t border-cream-200">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setMicOn(!micOn)}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                      micOn
-                        ? 'bg-navy-500 text-white'
-                        : 'bg-cream-100 text-slate-500 hover:bg-cream-200'
-                    }`}
-                  >
-                    {micOn ? <Mic size={18} /> : <MicOff size={18} />}
-                  </button>
-                  <input
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type your response..."
-                    className="flex-1 px-4 py-2.5 rounded-full bg-cream-50 border border-cream-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-500/20 focus:border-navy-500"
-                  />
-                  <button
-                    onClick={sendMessage}
-                    disabled={!input.trim()}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                      input.trim()
-                        ? 'bg-navy-500 text-white hover:bg-navy-600'
-                        : 'bg-cream-100 text-slate-400 cursor-not-allowed'
-                    }`}
-                  >
-                    <Send size={16} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Analysis Sidebar — 35% */}
-            <div className="flex-[35] flex flex-col gap-4">
-              {/* Meters */}
-              <div className="bg-white rounded-2xl border border-cream-300 p-5 shadow-sm">
-                <h3 className="text-sm font-medium text-slate-700 mb-4">
-                  Live Analysis
-                </h3>
-                <div className="space-y-4">
-                  {(
-                    [
-                      ['Confidence', meters.confidence],
-                      ['Arousal', meters.arousal],
-                      ['Positivity', meters.positivity],
-                      ['Eye contact', meters.eyeContact],
-                    ] as [string, number][]
-                  ).map(([label, value]) => (
-                    <div key={label}>
-                      <div className="flex justify-between text-xs mb-1.5">
-                        <span className="text-slate-600">{label}</span>
-                        <span className="text-slate-900 font-medium">{value}%</span>
-                      </div>
-                      <div className="h-1.5 bg-cream-200 rounded-full overflow-hidden">
-                        <motion.div
-                          animate={{ width: `${value}%` }}
-                          transition={{ duration: 0.8 }}
-                          className="h-full rounded-full bg-navy-500"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Rotating Tip */}
-              <div className="bg-white rounded-2xl border border-cream-300 p-5 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-navy-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-navy-500" />
-                  </span>
-                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Tip
-                  </span>
-                </div>
-                <AnimatePresence mode="wait">
-                  <motion.p
-                    key={currentTip}
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -5 }}
-                    transition={{ duration: 0.3 }}
-                    className="text-sm text-slate-700"
-                  >
-                    {tips[currentTip]}
-                  </motion.p>
-                </AnimatePresence>
-              </div>
-
-              {/* Filler Words */}
-              <div className="bg-white rounded-2xl border border-cream-300 p-5 shadow-sm">
-                <h3 className="text-sm font-medium text-slate-700 mb-3">
-                  Filler words detected
-                </h3>
-                {fillerWords.length === 0 ? (
-                  <p className="text-xs text-slate-400">No filler words yet</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {fillerWords.slice(-8).map((word, i) => (
-                      <span
-                        key={i}
-                        className="px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-xs text-amber-700"
-                      >
-                        {word}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </motion.div>
+            <RotateCcw className="h-4 w-4" />
+            Restart
+          </button>
         )}
-      </AnimatePresence>
+      </aside>
     </div>
   );
+}
+
+function TurnTranscript({ turn }: { turn: ConversationTurn }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-start">
+        <div className="max-w-[80%] rounded-2xl rounded-bl-md border border-cream-200 bg-cream-50 px-4 py-3 text-sm leading-6 text-slate-700">
+          {turn.prompt_text}
+        </div>
+      </div>
+      {turn.transcript ? (
+        <div className="flex justify-end">
+          <div className="max-w-[80%] rounded-2xl rounded-br-md bg-navy-500 px-4 py-3 text-sm leading-6 text-white">
+            {turn.transcript}
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-end">
+          <div className="max-w-[80%] rounded-2xl rounded-br-md border border-dashed border-cream-300 bg-white px-4 py-3 text-sm text-slate-400">
+            Your response is being captured.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PeerTypingBubble() {
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[80%] rounded-2xl rounded-bl-md border border-cream-200 bg-cream-50 px-4 py-3">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" />
+          <span
+            className="h-2 w-2 animate-bounce rounded-full bg-slate-400"
+            style={{ animationDelay: '0.15s' }}
+          />
+          <span
+            className="h-2 w-2 animate-bounce rounded-full bg-slate-400"
+            style={{ animationDelay: '0.3s' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TurnAnalysisCard({ turnAnalysis }: { turnAnalysis: TurnAnalysis | null }) {
+  if (!turnAnalysis) {
+    return <p className="mt-3 text-sm text-slate-500">Turn analysis is still processing.</p>;
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      <p className="text-sm leading-6 text-slate-700">{turnAnalysis.summary}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <ScoreTile label="Momentum" value={turnAnalysis.momentum_score} />
+        <ScoreTile label="Content" value={turnAnalysis.content_quality_score} />
+        <ScoreTile label="Delivery" value={turnAnalysis.emotional_delivery_score} />
+        <ScoreTile label="Energy" value={turnAnalysis.energy_match_score} />
+      </div>
+      <BulletList title="Strengths" items={turnAnalysis.strengths} />
+      <BulletList title="Next tweak" items={turnAnalysis.growth_edges} />
+    </div>
+  );
+}
+
+function FinalReportCard({
+  finalReport,
+  onReset,
+}: {
+  finalReport: FinalReport;
+  onReset: () => void;
+}) {
+  return (
+    <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
+      <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Final Report</h2>
+      <p className="mt-4 text-sm leading-6 text-slate-700">{finalReport.summary}</p>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <ScoreTile label="Momentum" value={finalReport.conversation_momentum_score} />
+        <ScoreTile label="Content" value={finalReport.content_quality_score} />
+        <ScoreTile label="Delivery" value={finalReport.emotional_delivery_score} />
+        <ScoreTile label="Energy" value={finalReport.energy_match_score} />
+        <ScoreTile label="Authentic" value={finalReport.authenticity_score} />
+        <ScoreTile label="Follow-up" value={finalReport.follow_up_invitation_score} />
+      </div>
+
+      <div className="mt-4 rounded-2xl bg-cream-50 p-4 text-sm text-slate-600">
+        <p className="font-semibold text-slate-900">Why it ended</p>
+        <p className="mt-1">{finalReport.natural_ending_reason}</p>
+      </div>
+
+      <BulletList title="Strengths" items={finalReport.strengths} />
+      <BulletList title="Growth edges" items={finalReport.growth_edges} />
+
+      <div className="mt-4 rounded-2xl border border-navy-100 bg-navy-50 p-4 text-sm text-navy-900">
+        <p className="font-semibold">Next focus</p>
+        <p className="mt-1">{finalReport.next_focus}</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onReset}
+        className="mt-5 inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-navy-600"
+      >
+        <RotateCcw className="h-4 w-4" />
+        Start another session
+      </button>
+    </section>
+  );
+}
+
+function MetricRow({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
+      <span>{label}</span>
+      <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-500">0-100</span>
+    </div>
+  );
+}
+
+function StatusPill({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: 'default' | 'success' | 'error';
+}) {
+  const toneClass =
+    tone === 'success'
+      ? 'bg-emerald-50 text-emerald-700'
+      : tone === 'error'
+        ? 'bg-red-50 text-red-600'
+        : 'bg-cream-100 text-slate-600';
+  return <span className={`rounded-full px-3 py-1.5 text-xs font-medium ${toneClass}`}>{label}</span>;
+}
+
+function InfoPair({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="mt-1 text-sm text-slate-700">{value}</p>
+    </div>
+  );
+}
+
+function ScoreTile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-2xl bg-cream-50 p-3">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-slate-900">{Math.round(value)}</p>
+    </div>
+  );
+}
+
+function BulletList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="mt-4">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{title}</p>
+      <div className="mt-2 space-y-2">
+        {items.map((item) => (
+          <div key={item} className="rounded-2xl bg-cream-50 px-3 py-2 text-sm text-slate-700">
+            {item}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getSupportedMimeType(candidates: string[]) {
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
+}
+
+function stopRecordersWithoutUpload(
+  videoRecorder: MediaRecorder | null,
+  audioRecorder: WavAudioRecorder | null,
+) {
+  if (videoRecorder?.state === 'recording') {
+    videoRecorder.stop();
+  }
+  audioRecorder?.discard();
+}
+
+function stopRecorder(recorder: MediaRecorder | null, chunks: Blob[], fallbackType: string) {
+  return new Promise<Blob>((resolve) => {
+    if (!recorder) {
+      resolve(new Blob([], { type: fallbackType }));
+      return;
+    }
+
+    recorder.onstop = () => {
+      resolve(new Blob(chunks, { type: recorder.mimeType || fallbackType }));
+    };
+
+    if (recorder.state === 'recording') {
+      recorder.stop();
+    } else {
+      resolve(new Blob(chunks, { type: recorder.mimeType || fallbackType }));
+    }
+  });
+}
+
+type WavAudioRecorder = {
+  start: () => void;
+  stop: () => Promise<Blob>;
+  discard: () => void;
+};
+
+function createWavAudioRecorder(stream: MediaStream): WavAudioRecorder {
+  const AudioContextCtor =
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+  if (!AudioContextCtor) {
+    throw new Error('Audio recording is not supported in this browser.');
+  }
+
+  const audioContext = new AudioContextCtor();
+  const audioStream = new MediaStream(stream.getAudioTracks());
+  const source = audioContext.createMediaStreamSource(audioStream);
+  const processor = audioContext.createScriptProcessor(4096, 1, 1);
+  const chunks: Float32Array[] = [];
+  let isCapturing = false;
+  let isStopped = false;
+
+  processor.onaudioprocess = (event) => {
+    event.outputBuffer.getChannelData(0).fill(0);
+    if (!isCapturing) {
+      return;
+    }
+    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  };
+
+  return {
+    start: () => {
+      isCapturing = true;
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      void audioContext.resume();
+    },
+    stop: async () => {
+      if (isStopped) {
+        return encodeWav(chunks, audioContext.sampleRate);
+      }
+      isStopped = true;
+      isCapturing = false;
+      disconnectAudioNodes(source, processor);
+      await audioContext.close();
+      return encodeWav(chunks, audioContext.sampleRate);
+    },
+    discard: () => {
+      isCapturing = false;
+      if (!isStopped) {
+        isStopped = true;
+        disconnectAudioNodes(source, processor);
+        void audioContext.close();
+      }
+    },
+  };
+}
+
+async function stopWavAudioRecorder(recorder: WavAudioRecorder | null) {
+  if (!recorder) {
+    return new Blob([], { type: 'audio/wav' });
+  }
+  return recorder.stop();
+}
+
+function disconnectAudioNodes(
+  source: MediaStreamAudioSourceNode,
+  processor: ScriptProcessorNode,
+) {
+  try {
+    source.disconnect();
+  } catch {
+    return;
+  }
+  try {
+    processor.disconnect();
+  } catch {
+    return;
+  }
+}
+
+function encodeWav(chunks: Float32Array[], sampleRate: number) {
+  const audioData = flattenFloat32Arrays(chunks);
+  const buffer = new ArrayBuffer(44 + audioData.length * 2);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + audioData.length * 2, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, audioData.length * 2, true);
+
+  let offset = 44;
+  for (const sample of audioData) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function flattenFloat32Arrays(chunks: Float32Array[]) {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function writeAscii(view: DataView, offset: number, text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index));
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
 }
