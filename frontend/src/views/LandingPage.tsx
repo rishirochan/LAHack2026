@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import LoginModal from '@/auth/LoginModal';
+import LoginModal, { type AuthMode } from '@/auth/LoginModal';
 import { useAuth } from '@/auth/AuthProvider';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Zap, MessageSquare, Mic } from 'lucide-react';
+import { Sparkles, Zap, MessageSquare, Mic } from 'lucide-react';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 30 },
@@ -44,12 +44,14 @@ export default function LandingPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('signin');
 
-  const openLogin = () => {
+  const openAuth = (mode: AuthMode) => {
     if (user) {
       router.push('/home');
       return;
     }
+    setAuthMode(mode);
     setIsLoginOpen(true);
   };
 
@@ -57,6 +59,7 @@ export default function LandingPage() {
     <div className="min-h-screen bg-cream-100">
       <LoginModal
         isOpen={isLoginOpen}
+        initialMode={authMode}
         onClose={() => setIsLoginOpen(false)}
         onSuccess={() => {
           setIsLoginOpen(false);
@@ -74,39 +77,44 @@ export default function LandingPage() {
         }}
       />
 
-      {/* Navbar */}
-      <motion.nav
-        initial={{ y: -100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.8, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-cream-50/80 backdrop-blur-xl border border-cream-300 rounded-full px-6 py-3 flex items-center justify-between gap-8 shadow-[0_8px_32px_rgba(0,0,0,0.08)] max-w-[1200px] w-[90%]"
-      >
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-navy-500 flex items-center justify-center">
-            <Zap size={16} className="text-white" />
+      {/* Header */}
+      <header className="relative z-10 flex items-center justify-between px-8 pt-8 pb-4 max-w-[1200px] mx-auto">
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          className="flex items-center gap-2.5"
+        >
+          <div className="w-9 h-9 rounded-xl bg-navy-500 flex items-center justify-center">
+            <Sparkles size={18} className="text-white" />
           </div>
-          <span className="font-['Playfair_Display'] text-xl font-semibold text-slate-900">
-            Eloquence
+          <span className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+            Clarity
           </span>
-        </div>
-        <div className="flex items-center gap-3">
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          className="flex items-center gap-3"
+        >
           <button
-            onClick={openLogin}
+            onClick={() => openAuth('signin')}
             className="px-5 py-2 text-sm text-slate-600 hover:text-slate-900 transition-colors rounded-full hover:bg-cream-200"
           >
             Log in
           </button>
           <button
-            onClick={openLogin}
+            onClick={() => openAuth('signup')}
             className="px-5 py-2 text-sm bg-navy-500 text-white rounded-full hover:bg-navy-600 transition-all shadow-md"
           >
             Get started
           </button>
-        </div>
-      </motion.nav>
+        </motion.div>
+      </header>
 
       {/* Hero Section */}
-      <section className="relative pt-40 pb-24 px-6 flex flex-col items-center text-center overflow-hidden">
+      <section className="relative pt-20 pb-24 px-6 flex flex-col items-center text-center overflow-hidden">
         {/* 3D Decorative Elements */}
         <motion.img
           src="/hero-3d-elements.png"
@@ -170,7 +178,7 @@ export default function LandingPage() {
           className="flex items-center gap-4 mb-12"
         >
           <button
-            onClick={openLogin}
+            onClick={() => openAuth('signup')}
             className="px-7 py-3 bg-navy-500 text-white rounded-full font-medium hover:bg-navy-600 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
           >
             Start practicing free
@@ -277,15 +285,12 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-navy-500 flex items-center justify-center">
-              <Zap size={14} className="text-white" />
+              <Sparkles size={14} className="text-white" />
             </div>
             <span className="font-['Playfair_Display'] text-lg font-semibold text-slate-900">
-              Eloquence
+              Clarity
             </span>
           </div>
-          <p className="text-sm text-slate-500">
-            Built at LA Hacks 2025
-          </p>
         </div>
       </footer>
 

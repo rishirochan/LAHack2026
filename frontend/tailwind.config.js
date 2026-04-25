@@ -7,7 +7,9 @@ const config = {
     './src/app/**/*.{js,ts,jsx,tsx}',
     './src/views/**/*.{js,ts,jsx,tsx}',
     './src/components/Sidebar.tsx',
+    './src/auth/**/*.{js,ts,jsx,tsx}',
     './src/context/**/*.{js,ts,jsx,tsx}',
+    './src/hooks/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {

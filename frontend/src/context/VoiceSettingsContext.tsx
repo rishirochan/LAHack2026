@@ -43,7 +43,7 @@ export function VoiceSettingsProvider({ children }: { children: ReactNode }) {
         const parsed = JSON.parse(stored) as Partial<StoredVoiceSettings>;
         setSelectedVoiceId(typeof parsed.selectedVoiceId === 'string' ? parsed.selectedVoiceId : null);
         setSelectedVoiceName(typeof parsed.selectedVoiceName === 'string' ? parsed.selectedVoiceName : '');
-        setSpeechRate(clampSpeechRate(parsed.speechRate));
+        setSpeechRateState(clampSpeechRate(parsed.speechRate));
       }
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
