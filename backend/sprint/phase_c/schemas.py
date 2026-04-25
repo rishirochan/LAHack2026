@@ -17,6 +17,8 @@ class ChunkRecord(TypedDict):
     video_emotions: list[dict[str, Any]] | None
     audio_emotions: list[dict[str, Any]] | None
     status: ChunkStatus
+    video_upload: NotRequired[dict[str, Any] | None]
+    audio_upload: NotRequired[dict[str, Any] | None]
     imentiv_analysis: NotRequired[dict[str, Any] | None]
     error: NotRequired[str | None]
 
@@ -25,6 +27,7 @@ class RecordingState(TypedDict):
     recording_start_ms: int | None
     recording_end_ms: int | None
     chunks: list[ChunkRecord]
+    transcript_audio_upload: dict[str, Any] | None
     transcript: str | None
     transcript_words: list[dict[str, Any]] | None
     merged_analysis: dict[str, Any] | None
@@ -34,7 +37,6 @@ class RecordingState(TypedDict):
 
 class PhaseCState(TypedDict):
     session_id: str
-    difficulty: int
     status: SessionStatus
     current_recording: RecordingState | None
     completed_recording: RecordingState | None
@@ -46,6 +48,7 @@ def build_recording_state() -> RecordingState:
         "recording_start_ms": None,
         "recording_end_ms": None,
         "chunks": [],
+        "transcript_audio_upload": None,
         "transcript": None,
         "transcript_words": None,
         "merged_analysis": None,
@@ -54,10 +57,9 @@ def build_recording_state() -> RecordingState:
     }
 
 
-def build_initial_state(session_id: str, difficulty: int) -> PhaseCState:
+def build_initial_state(session_id: str) -> PhaseCState:
     return {
         "session_id": session_id,
-        "difficulty": difficulty,
         "status": "active",
         "current_recording": None,
         "completed_recording": None,
@@ -66,7 +68,7 @@ def build_initial_state(session_id: str, difficulty: int) -> PhaseCState:
 
 
 class StartPhaseCSessionRequest(BaseModel):
-    difficulty: int = Field(ge=1, le=10)
+    pass
 
 
 class StartPhaseCSessionResponse(BaseModel):
@@ -76,7 +78,6 @@ class StartPhaseCSessionResponse(BaseModel):
 
 class PhaseCSessionStateResponse(BaseModel):
     session_id: str
-    difficulty: int
     status: SessionStatus
     current_recording: dict[str, Any] | None
     completed_recording: dict[str, Any] | None

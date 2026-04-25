@@ -25,15 +25,7 @@ export default function LoginModal({
   const [email, setEmail] = useState<string>(MOCK_LOGIN_CREDENTIALS.email);
   const [password, setPassword] = useState<string>(MOCK_LOGIN_CREDENTIALS.password);
   const [error, setError] = useState('');
-  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
-
-  useEffect(() => {
-    setPortalTarget(document.body);
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen) setError('');
-  }, [isOpen]);
+  const portalTarget = typeof document === 'undefined' ? null : document.body;
 
   useEffect(() => {
     if (isOpen) {
@@ -48,6 +40,11 @@ export default function LoginModal({
 
   if (!isOpen || !portalTarget) return null;
 
+  const handleClose = () => {
+    setError('');
+    onClose();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValidMockLogin(email, password)) {
@@ -55,6 +52,7 @@ export default function LoginModal({
       return;
     }
     login(createMockUser(email));
+    setError('');
     onSuccess();
   };
 
@@ -79,7 +77,7 @@ export default function LoginModal({
       {/* Back link top-right */}
       <button
         type="button"
-        onClick={onClose}
+        onClick={handleClose}
         className="absolute top-7 right-8 text-sm text-slate-500 hover:text-slate-900 transition-colors"
       >
         &larr; Back to home
@@ -103,7 +101,12 @@ export default function LoginModal({
               type="email"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (error) {
+                  setError('');
+                }
+              }}
               className={inputClass}
             />
           </div>
@@ -116,7 +119,12 @@ export default function LoginModal({
               type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (error) {
+                  setError('');
+                }
+              }}
               className={inputClass}
             />
           </div>

@@ -16,7 +16,7 @@ class PhaseCApiTests(unittest.TestCase):
         self.client = TestClient(sprint_api.app)
         self.manager = get_phase_c_manager()
         self.manager._sessions.clear()
-        self.session = self.manager.create_session(5)
+        self.session = self.manager.create_session()
         self.manager.start_recording(self.session.session_id)
 
     def tearDown(self) -> None:
@@ -52,12 +52,12 @@ class PhaseCApiTests(unittest.TestCase):
             )
 
     def test_create_session_succeeds(self) -> None:
-        response = self.client.post("/api/phase-c/sessions", json={"difficulty": 4})
+        response = self.client.post("/api/phase-c/sessions", json={})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "active")
 
     def test_recording_start_emits_recording_ready(self) -> None:
-        session = self.manager.create_session(4)
+        session = self.manager.create_session()
         response = self.client.post(f"/api/phase-c/sessions/{session.session_id}/recording/start")
 
         self.assertEqual(response.status_code, 200)
@@ -92,6 +92,23 @@ class PhaseCApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "The recording was empty. Check camera and microphone access.")
+
+    def test_transcribe_stores_transcript_audio_upload_and_transcript(self) -> None:
+        with patch(
+            "backend.sprint.phase_c.elevenlabs.transcribe_audio",
+            new=AsyncMock(return_value=("A concise update.", [{"word": "A", "start": 0.0, "end": 0.1}])),
+        ):
+            response = self.client.post(
+                self._transcribe_url(),
+                files={"audio_file": _file_payload("audio.webm", b"audio-bytes", "audio/webm")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["transcript"], "A concise update.")
+        recording = self.manager.get_state(self.session.session_id)["current_recording"]
+        self.assertIsNotNone(recording)
+        self.assertEqual(recording["transcript"], "A concise update.")
+        self.assertEqual(recording["transcript_audio_upload"]["storage_key"], f"phase_c/{self.session.session_id}/transcript_audio.webm")
 
     def test_complete_rejects_no_chunks(self) -> None:
         graph_mock = AsyncMock(return_value={})

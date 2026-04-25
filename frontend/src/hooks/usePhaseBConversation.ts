@@ -63,7 +63,6 @@ type SessionStateResponse = {
   session_id: string;
   scenario: string | null;
   scenario_preference: string | null;
-  difficulty: number;
   peer_profile: PeerProfile | null;
   starter_topic: string | null;
   opening_line: string | null;
@@ -109,14 +108,13 @@ export function usePhaseBConversation(options?: {
   const audioChunksRef = useRef<string[]>([]);
   const pendingRecordingReadyRef = useRef(false);
 
-  async function startSession(difficulty: number) {
+  async function startSession() {
     clearSurface();
     setStatus('starting');
     const response = await fetch(`${API_URL}/api/phase-b/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        difficulty,
         voice_id: voiceId,
       }),
     });

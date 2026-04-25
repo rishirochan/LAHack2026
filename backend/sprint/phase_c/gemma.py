@@ -21,7 +21,6 @@ async def generate_phase_c_summary(
     *,
     ai_service: AIServiceFacade,
     scorecard_json: str,
-    difficulty: int,
 ) -> str:
     model = ai_service.gemma_model
     if model is None:
@@ -32,7 +31,7 @@ async def generate_phase_c_summary(
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=f"Difficulty: {difficulty}\nScorecard JSON:\n{scorecard_json}"),
+        HumanMessage(content=f"Scorecard JSON:\n{scorecard_json}"),
     ]
     response = await model.ainvoke(messages, temperature=0.3, max_tokens=220)
     text = str(response.content).strip()

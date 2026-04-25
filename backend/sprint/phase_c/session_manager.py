@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 
+from backend.shared.db import get_session_repository
+from backend.shared.db.tasks import schedule_repository_write
 from backend.sprint.phase_c.constants import (
     RETRY_EMPTY_MESSAGE,
     RETRY_INVALID_CHUNKS_MESSAGE,
@@ -27,10 +29,17 @@ class PhaseCSessionManager:
     def __init__(self) -> None:
         self._sessions: dict[str, ActivePhaseCSession] = {}
 
-    def create_session(self, difficulty: int) -> ActivePhaseCSession:
+    def create_session(self) -> ActivePhaseCSession:
         session_id = str(uuid4())
-        session = ActivePhaseCSession(session_id=session_id, state=build_initial_state(session_id, difficulty))
+        session = ActivePhaseCSession(session_id=session_id, state=build_initial_state(session_id))
         self._sessions[session_id] = session
+        schedule_repository_write(
+            get_session_repository().create_phase_c_session(
+                session_id=session_id,
+                state=dict(session.state),
+            ),
+            key=session_id,
+        )
         return session
 
     def get_session(self, session_id: str) -> ActivePhaseCSession:
@@ -48,6 +57,7 @@ class PhaseCSessionManager:
             raise RuntimeError("Session is not active.")
         recording = build_recording_state()
         state["current_recording"] = recording
+        self.persist_state(session_id)
         return recording
 
     def _current_recording(self, session_id: str) -> RecordingState:
@@ -59,6 +69,7 @@ class PhaseCSessionManager:
 
     def add_chunk(self, session_id: str, chunk: ChunkRecord) -> None:
         self._current_recording(session_id)["chunks"].append(chunk)
+        self.persist_state(session_id)
 
     def has_chunk(self, session_id: str, chunk_index: int) -> bool:
         return any(chunk["chunk_index"] == chunk_index for chunk in self._current_recording(session_id)["chunks"])
@@ -71,6 +82,7 @@ class PhaseCSessionManager:
 
     def update_chunk(self, session_id: str, chunk_index: int, updates: dict[str, Any]) -> None:
         self.get_chunk(session_id, chunk_index).update(updates)  # type: ignore[typeddict-item]
+        self.persist_state(session_id)
 
     def get_sorted_chunks(self, session_id: str) -> list[ChunkRecord]:
         return sorted(
@@ -82,14 +94,22 @@ class PhaseCSessionManager:
         recording = self._current_recording(session_id)
         recording["transcript"] = transcript
         recording["transcript_words"] = words
+        self.persist_state(session_id)
+
+    def store_transcript_upload(self, session_id: str, upload_ref: dict[str, Any]) -> None:
+        recording = self._current_recording(session_id)
+        recording["transcript_audio_upload"] = upload_ref
+        self.persist_state(session_id)
 
     def set_recording_window(self, session_id: str, start_ms: int, end_ms: int) -> None:
         recording = self._current_recording(session_id)
         recording["recording_start_ms"] = start_ms
         recording["recording_end_ms"] = end_ms
+        self.persist_state(session_id)
 
     def set_merged_analysis(self, session_id: str, merged_analysis: dict[str, Any]) -> None:
         self._current_recording(session_id)["merged_analysis"] = merged_analysis
+        self.persist_state(session_id)
 
     def validate_recording(
         self,
@@ -142,7 +162,17 @@ class PhaseCSessionManager:
         state["completed_recording"] = recording
         state["current_recording"] = None
         state["status"] = "complete"
+        self.persist_state(session_id)
         return state
+
+    def persist_state(self, session_id: str) -> None:
+        schedule_repository_write(
+            get_session_repository().update_phase_c_state(
+                session_id=session_id,
+                state=dict(self.get_state(session_id)),
+            ),
+            key=session_id,
+        )
 
     async def bind_websocket(self, session_id: str, websocket: WebSocket) -> None:
         session = self.get_session(session_id)

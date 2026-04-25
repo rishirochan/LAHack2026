@@ -9,7 +9,7 @@ class PhaseBValidationTests(unittest.TestCase):
         reset_session_repository(InMemorySessionRepository())
         self.manager = get_phase_b_manager()
         self.manager._sessions.clear()
-        self.session = self.manager.create_session("interview", 5)
+        self.session = self.manager.create_session("interview")
         self.manager.start_turn(self.session.session_id, "Tell me about yourself.")
 
     def tearDown(self) -> None:

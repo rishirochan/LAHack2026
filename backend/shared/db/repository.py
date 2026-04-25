@@ -54,6 +54,23 @@ class SessionRepository(Protocol):
     ) -> None:
         ...
 
+    async def create_phase_c_session(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+        user_id: str = DEFAULT_USER_ID,
+    ) -> None:
+        ...
+
+    async def update_phase_c_state(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+    ) -> None:
+        ...
+
     async def list_recent_sessions(
         self,
         *,
@@ -163,7 +180,6 @@ class InMemorySessionRepository:
                     "scenario": state.get("scenario"),
                     "scenario_preference": state.get("scenario_preference"),
                     "voice_id": state.get("voice_id"),
-                    "difficulty": state.get("difficulty"),
                     "max_turns": state.get("max_turns"),
                     "minimum_turns": state.get("minimum_turns"),
                     "peer_profile": state.get("peer_profile"),
@@ -203,7 +219,6 @@ class InMemorySessionRepository:
                         "scenario": state.get("scenario"),
                         "scenario_preference": state.get("scenario_preference"),
                         "voice_id": state.get("voice_id"),
-                        "difficulty": state.get("difficulty"),
                         "max_turns": state.get("max_turns"),
                         "minimum_turns": state.get("minimum_turns"),
                         "peer_profile": state.get("peer_profile"),
@@ -219,6 +234,62 @@ class InMemorySessionRepository:
             session_id=session_id,
             state=state,
             user_id=str(document.get("user_id") or DEFAULT_USER_ID),
+        )
+
+    async def create_phase_c_session(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+        user_id: str = DEFAULT_USER_ID,
+    ) -> None:
+        now = _now()
+        self._documents[session_id] = _without_none(
+            {
+                "session_id": session_id,
+                "user_id": user_id,
+                "mode": "phase_c",
+                "mode_label": "Free Speaking",
+                "status": state.get("status", "active"),
+                "created_at": now,
+                "updated_at": now,
+                "completed_at": now if state.get("status") == "complete" else None,
+                "setup": {},
+                "summary": _phase_c_summary(state),
+                "media_refs": _phase_c_media_refs(state),
+                "raw_state": _json_safe(_sanitize_phase_c_state(state)),
+            }
+        )
+
+    async def update_phase_c_state(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+    ) -> None:
+        document = self._documents.setdefault(
+            session_id,
+            {
+                "session_id": session_id,
+                "user_id": DEFAULT_USER_ID,
+                "mode": "phase_c",
+                "mode_label": "Free Speaking",
+                "created_at": _now(),
+            },
+        )
+        status = str(state.get("status", "active"))
+        document.update(
+            _without_none(
+                {
+                    "status": status,
+                    "updated_at": _now(),
+                    "completed_at": _now() if status == "complete" else document.get("completed_at"),
+                    "setup": {},
+                    "summary": _phase_c_summary(state),
+                    "media_refs": _phase_c_media_refs(state),
+                    "raw_state": _json_safe(_sanitize_phase_c_state(state)),
+                }
+            )
         )
 
     async def list_recent_sessions(
@@ -397,7 +468,6 @@ class MongoSessionRepository:
                         "scenario": state.get("scenario"),
                         "scenario_preference": state.get("scenario_preference"),
                         "voice_id": state.get("voice_id"),
-                        "difficulty": state.get("difficulty"),
                         "max_turns": state.get("max_turns"),
                         "minimum_turns": state.get("minimum_turns"),
                         "peer_profile": state.get("peer_profile"),
@@ -428,7 +498,6 @@ class MongoSessionRepository:
                     "scenario": state.get("scenario"),
                     "scenario_preference": state.get("scenario_preference"),
                     "voice_id": state.get("voice_id"),
-                    "difficulty": state.get("difficulty"),
                     "max_turns": state.get("max_turns"),
                     "minimum_turns": state.get("minimum_turns"),
                     "peer_profile": state.get("peer_profile"),
@@ -456,6 +525,68 @@ class MongoSessionRepository:
             session_id=session_id,
             state=state,
             user_id=owner_user_id,
+        )
+
+    async def create_phase_c_session(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+        user_id: str = DEFAULT_USER_ID,
+    ) -> None:
+        now = _now()
+        await self._collection.update_one(
+            {"session_id": session_id},
+            {
+                "$setOnInsert": {
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "mode": "phase_c",
+                    "mode_label": "Free Speaking",
+                    "created_at": now,
+                },
+                "$set": {
+                    "status": state.get("status", "active"),
+                    "updated_at": now,
+                    "setup": {},
+                    "summary": _phase_c_summary(state),
+                    "media_refs": _phase_c_media_refs(state),
+                    "raw_state": _json_safe(_sanitize_phase_c_state(state)),
+                },
+            },
+            upsert=True,
+        )
+
+    async def update_phase_c_state(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+    ) -> None:
+        status = str(state.get("status", "active"))
+        set_doc = _without_none(
+            {
+                "status": status,
+                "updated_at": _now(),
+                "completed_at": _now() if status == "complete" else None,
+                "setup": {},
+                "summary": _phase_c_summary(state),
+                "media_refs": _phase_c_media_refs(state),
+                "raw_state": _json_safe(_sanitize_phase_c_state(state)),
+            }
+        )
+        await self._collection.update_one(
+            {"session_id": session_id},
+            {
+                "$set": set_doc,
+                "$setOnInsert": {
+                    "created_at": _now(),
+                    "user_id": DEFAULT_USER_ID,
+                    "mode": "phase_c",
+                    "mode_label": "Free Speaking",
+                },
+            },
+            upsert=True,
         )
 
     async def list_recent_sessions(
@@ -629,7 +760,6 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
         "scenario": state.get("scenario"),
         "scenario_preference": state.get("scenario_preference"),
         "voice_id": state.get("voice_id"),
-        "difficulty": state.get("difficulty"),
         "status": state.get("status"),
         "starter_topic": state.get("starter_topic"),
         "peer_profile": _json_safe(state.get("peer_profile")),
@@ -865,6 +995,8 @@ def _score_history(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         average_score = None
         if isinstance(scores, list) and scores:
             average_score = round(float(sum(scores) / len(scores)) * 100)
+        elif summary.get("overall_score") is not None:
+            average_score = int(round(float(summary.get("overall_score") or 0)))
         elif summary.get("avg_eye_contact_pct") is not None:
             average_score = summary.get("avg_eye_contact_pct")
         if average_score is None:
@@ -902,6 +1034,83 @@ def _sanitize_phase_b_state(state: dict[str, Any] | None) -> dict[str, Any] | No
     if not isinstance(state, dict):
         return state
     return _scrub_media_paths(state)
+
+
+def _sanitize_phase_c_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(state, dict):
+        return state
+    sanitized = _scrub_media_paths(state)
+    sanitized["video_path"] = None
+    sanitized["audio_path"] = None
+    return sanitized
+
+
+def _phase_c_summary(state: dict[str, Any]) -> dict[str, Any] | None:
+    completed_recording = state.get("completed_recording")
+    if not isinstance(completed_recording, dict):
+        return None
+
+    scorecard = completed_recording.get("scorecard")
+    if not isinstance(scorecard, dict):
+        return None
+
+    written_summary = completed_recording.get("written_summary")
+    return {
+        "session_id": state.get("session_id"),
+        "overall_score": scorecard.get("overall_score"),
+        "average_wpm": scorecard.get("average_wpm"),
+        "filler_word_count": scorecard.get("filler_word_count"),
+        "duration_seconds": scorecard.get("duration_seconds"),
+        "strengths": scorecard.get("strengths") or [],
+        "improvement_areas": scorecard.get("improvement_areas") or [],
+        "written_summary": written_summary if isinstance(written_summary, str) else "",
+    }
+
+
+def _phase_c_media_refs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    recording = state.get("current_recording")
+    if not isinstance(recording, dict):
+        recording = state.get("completed_recording")
+    if not isinstance(recording, dict):
+        return refs
+
+    session_id = str(state.get("session_id") or "")
+    transcript_audio_upload = recording.get("transcript_audio_upload")
+    if isinstance(transcript_audio_upload, dict):
+        refs.append(
+            {
+                "kind": "transcript_audio_upload",
+                "download_url": f"/api/phase-c/sessions/{session_id}/transcript-audio",
+                "upload": _public_upload_ref(transcript_audio_upload),
+            }
+        )
+
+    for chunk in recording.get("chunks") or []:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_index = int(chunk.get("chunk_index") or 0)
+        for kind in ("video_upload", "audio_upload"):
+            upload = chunk.get(kind)
+            if not isinstance(upload, dict):
+                continue
+            media_kind = _phase_c_kind_to_media_name(kind)
+            refs.append(
+                {
+                    "chunk_index": chunk_index,
+                    "kind": kind,
+                    "download_url": (
+                        f"/api/phase-c/sessions/{session_id}/chunks/{chunk_index}/{media_kind}"
+                    ),
+                    "upload": _public_upload_ref(upload),
+                }
+            )
+
+    return refs
+
+
+def _phase_c_kind_to_media_name(kind: str) -> str:
+    return "video" if kind == "video_upload" else "audio"
 
 
 def _scrub_media_paths(value: Any) -> Any:

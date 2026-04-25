@@ -53,7 +53,6 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
             setup = await _generate_json(
                 system_prompt=SETUP_SYSTEM_PROMPT,
                 user_prompt=build_setup_user(
-                    difficulty=session_state["difficulty"],
                     scenario_preference=session_state.get("scenario_preference"),
                 ),
                 fallback=setup_fallback,
@@ -92,7 +91,6 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
                     peer_profile=peer_profile,
                     starter_topic=session_state.get("starter_topic"),
                     conversation_history=session_state["conversation_history"],
-                    difficulty=session_state["difficulty"],
                 ),
                 temperature=0.8,
                 max_tokens=120,

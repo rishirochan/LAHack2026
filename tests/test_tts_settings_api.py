@@ -84,7 +84,6 @@ class TtsSettingsApiTests(unittest.TestCase):
 
     def test_phase_b_next_turn_updates_voice_id_before_prompt(self) -> None:
         session = self.manager.create_session(
-            difficulty=5,
             scenario_preference="interview",
             voice_id="voice-old",
         )

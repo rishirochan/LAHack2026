@@ -64,6 +64,7 @@ RETRY_EMPTY_MESSAGE = "The recording was empty. Check camera and microphone acce
 RETRY_INVALID_CHUNKS_MESSAGE = "Some recording chunks were missing or overlapped. Please record that turn again."
 PHASE_A_MEDIA_KINDS = {"video", "audio"}
 PHASE_B_MEDIA_KINDS = {"video", "audio"}
+PHASE_C_MEDIA_KINDS = {"video", "audio"}
 
 app.add_middleware(
     CORSMiddleware,
@@ -178,6 +179,9 @@ def _to_session_preview(session: dict) -> dict[str, object]:
             score = round(float(sum(scores) / len(scores)) * 100)
     elif mode == "phase_b":
         label = str(setup.get("scenario") or "Conversation").replace("_", " ").title()
+    elif mode == "phase_c":
+        label = "Free Speaking"
+        score = summary.get("overall_score") if isinstance(summary, dict) else None
 
     return {
         "session_id": session.get("session_id"),
@@ -189,6 +193,7 @@ def _to_session_preview(session: dict) -> dict[str, object]:
         "updated_at": session.get("updated_at"),
         "completed_at": session.get("completed_at"),
         "score": score,
+        "duration_seconds": summary.get("duration_seconds") if isinstance(summary, dict) else None,
         "total_turns": summary.get("total_turns") if isinstance(summary, dict) else None,
         "round_count": len(summary.get("rounds", [])) if isinstance(summary.get("rounds"), list) else None,
     }
@@ -384,6 +389,19 @@ def _phase_b_transcript_storage_key(session_id: str, turn_index: int, suffix: st
     return f"phase_b/{session_id}/turn_{turn_index}/transcript_audio{suffix}"
 
 
+def _phase_c_chunk_storage_key(
+    session_id: str,
+    chunk_index: int,
+    media_kind: str,
+    suffix: str,
+) -> str:
+    return f"phase_c/{session_id}/chunk_{chunk_index}_{media_kind}{suffix}"
+
+
+def _phase_c_transcript_storage_key(session_id: str, suffix: str) -> str:
+    return f"phase_c/{session_id}/transcript_audio{suffix}"
+
+
 def _find_phase_a_media_ref(session: dict[str, object] | None, round_index: int, media_kind: str) -> dict[str, object]:
     if not isinstance(session, dict):
         raise HTTPException(status_code=404, detail="Session was not found.")
@@ -432,6 +450,37 @@ def _find_phase_b_transcript_media_ref(session: dict[str, object] | None, turn_i
             continue
         return media_ref
     raise HTTPException(status_code=404, detail="Phase B transcript audio was not found.")
+
+
+def _find_phase_c_chunk_media_ref(
+    session: dict[str, object] | None,
+    chunk_index: int,
+    media_kind: str,
+) -> dict[str, object]:
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    expected_kind = f"{media_kind}_upload"
+    for media_ref in session.get("media_refs") or []:
+        if not isinstance(media_ref, dict):
+            continue
+        if _index_value(media_ref.get("chunk_index")) != chunk_index:
+            continue
+        if media_ref.get("kind") != expected_kind:
+            continue
+        return media_ref
+    raise HTTPException(status_code=404, detail="Phase C chunk media was not found.")
+
+
+def _find_phase_c_transcript_media_ref(session: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    for media_ref in session.get("media_refs") or []:
+        if not isinstance(media_ref, dict):
+            continue
+        if media_ref.get("kind") != "transcript_audio_upload":
+            continue
+        return media_ref
+    raise HTTPException(status_code=404, detail="Phase C transcript audio was not found.")
 
 
 async def _build_media_response(media_ref: dict[str, object]) -> StreamingResponse:
@@ -547,7 +596,6 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
     """Create a new Phase B conversation session."""
 
     session = get_phase_b_manager().create_session(
-        difficulty=request.difficulty,
         scenario_preference=request.scenario_preference,
         voice_id=request.voice_id,
         max_turns=request.max_turns,
@@ -568,7 +616,6 @@ async def get_phase_b_session(session_id: str) -> SessionStateResponse:
     return SessionStateResponse(
         session_id=state["session_id"],
         scenario=state["scenario"],
-        difficulty=state["difficulty"],
         scenario_preference=state.get("scenario_preference"),
         voice_id=state.get("voice_id"),
         peer_profile=state.get("peer_profile"),
@@ -943,7 +990,7 @@ async def _soft_result(awaitable):
 
 @app.post("/api/phase-c/sessions", response_model=StartPhaseCSessionResponse)
 async def start_phase_c_session(request: StartPhaseCSessionRequest) -> StartPhaseCSessionResponse:
-    session = get_phase_c_manager().create_session(request.difficulty)
+    session = get_phase_c_manager().create_session()
     return StartPhaseCSessionResponse(session_id=session.session_id)
 
 
@@ -956,7 +1003,6 @@ async def get_phase_c_session(session_id: str) -> PhaseCSessionStateResponse:
 
     return PhaseCSessionStateResponse(
         session_id=state["session_id"],
-        difficulty=state["difficulty"],
         status=state["status"],
         current_recording=state.get("current_recording"),
         completed_recording=state.get("completed_recording"),
@@ -1015,9 +1061,25 @@ async def phase_c_upload_chunk(
     if get_phase_c_manager().has_chunk(session_id, chunk_index):
         raise HTTPException(status_code=409, detail=f"Chunk {chunk_index} has already been uploaded.")
 
-    video_path = await _save_upload(video_file, suffix=".webm")
-    audio_path = await _save_upload(audio_file, suffix=".webm")
-    if Path(video_path).stat().st_size == 0 or Path(audio_path).stat().st_size == 0:
+    video_upload = await _save_media_upload(
+        video_file,
+        storage_key=_phase_c_chunk_storage_key(
+            session_id,
+            chunk_index,
+            "video",
+            _upload_suffix(video_file, ".webm"),
+        ),
+    )
+    audio_upload = await _save_media_upload(
+        audio_file,
+        storage_key=_phase_c_chunk_storage_key(
+            session_id,
+            chunk_index,
+            "audio",
+            _upload_suffix(audio_file, ".webm"),
+        ),
+    )
+    if int(video_upload.get("size_bytes") or 0) == 0 or int(audio_upload.get("size_bytes") or 0) == 0:
         raise HTTPException(status_code=400, detail="Chunk uploads must contain non-empty audio and video.")
 
     try:
@@ -1035,9 +1097,11 @@ async def phase_c_upload_chunk(
             "video_emotions": None,
             "audio_emotions": None,
             "status": "pending",
+            "video_upload": video_upload,
+            "audio_upload": audio_upload,
         },
     )
-    asyncio.create_task(_process_phase_c_chunk(session_id, chunk_index, video_path, audio_path))
+    asyncio.create_task(_process_phase_c_chunk(session_id, chunk_index, video_upload, audio_upload))
     return {"status": "accepted", "chunk_index": str(chunk_index)}
 
 
@@ -1048,8 +1112,11 @@ async def phase_c_transcribe(session_id: str, audio_file: UploadFile = File(...)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
-    audio_path = await _save_upload(audio_file, suffix=".webm")
-    if Path(audio_path).stat().st_size == 0:
+    transcript_audio_upload = await _save_media_upload(
+        audio_file,
+        storage_key=_phase_c_transcript_storage_key(session_id, _upload_suffix(audio_file, ".webm")),
+    )
+    if int(transcript_audio_upload.get("size_bytes") or 0) == 0:
         await get_phase_c_manager().send_event(
             session_id,
             "retry_recording",
@@ -1060,12 +1127,39 @@ async def phase_c_transcribe(session_id: str, audio_file: UploadFile = File(...)
     from backend.shared.ai import get_ai_service
     from backend.sprint.phase_c.elevenlabs import transcribe_audio
 
-    try:
+    get_phase_c_manager().store_transcript_upload(session_id, transcript_audio_upload)
+
+    file_id = transcript_audio_upload.get("file_id")
+    if not file_id:
+        raise HTTPException(status_code=500, detail="Transcript audio file identifier was missing.")
+    async with get_media_store().materialize_temp_file(file_id=str(file_id), suffix=".webm") as audio_path:
         transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
-    finally:
-        Path(audio_path).unlink(missing_ok=True)
     get_phase_c_manager().store_transcript(session_id, transcript, words)
     return {"transcript": transcript, "word_count": len(words)}
+
+
+@app.get("/api/phase-c/sessions/{session_id}/chunks/{chunk_index}/{media_kind}")
+async def download_phase_c_chunk_media(
+    session_id: str,
+    chunk_index: int,
+    media_kind: str,
+) -> StreamingResponse:
+    """Download one persisted Phase C chunk media artifact."""
+
+    if media_kind not in PHASE_C_MEDIA_KINDS:
+        raise HTTPException(status_code=404, detail="Phase C media type was not found.")
+    session = await get_session_repository().get_session(session_id)
+    media_ref = _find_phase_c_chunk_media_ref(session, chunk_index, media_kind)
+    return await _build_media_response(media_ref)
+
+
+@app.get("/api/phase-c/sessions/{session_id}/transcript-audio")
+async def download_phase_c_transcript_audio(session_id: str) -> StreamingResponse:
+    """Download the full-session transcript audio capture for Phase C."""
+
+    session = await get_session_repository().get_session(session_id)
+    media_ref = _find_phase_c_transcript_media_ref(session)
+    return await _build_media_response(media_ref)
 
 
 @app.post("/api/phase-c/sessions/{session_id}/complete")
@@ -1102,8 +1196,8 @@ async def phase_c_complete(session_id: str) -> dict[str, str]:
 async def _process_phase_c_chunk(
     session_id: str,
     chunk_index: int,
-    video_path: str,
-    audio_path: str,
+    video_upload: dict[str, object],
+    _audio_upload: dict[str, object],
 ) -> None:
     from backend.shared.ai import get_settings
     from backend.sprint.phase_c.imentiv import analyze_video
@@ -1115,7 +1209,7 @@ async def _process_phase_c_chunk(
         manager.update_chunk(session_id, chunk_index, {"status": "processing"})
         analysis = await analyze_video(
             settings,
-            video_path,
+            video_upload,
             title=f"phase-c-{session_id}-chunk-{chunk_index}",
             description="Phase C freeform speaking chunk analysis.",
         )
@@ -1131,6 +1225,3 @@ async def _process_phase_c_chunk(
         )
     except Exception as error:
         manager.update_chunk(session_id, chunk_index, {"status": "failed", "error": str(error)})
-    finally:
-        Path(video_path).unlink(missing_ok=True)
-        Path(audio_path).unlink(missing_ok=True)

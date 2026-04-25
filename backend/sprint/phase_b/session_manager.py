@@ -14,6 +14,7 @@ from backend.sprint.phase_b.schemas import (
     MomentumDecision,
     PeerProfile,
     PhaseBState,
+    Scenario,
     TurnAnalysis,
     TurnState,
     build_initial_state,
@@ -44,7 +45,6 @@ class PhaseBSessionManager:
     def create_session(
         self,
         *,
-        difficulty: int,
         scenario_preference: str | None,
         max_turns: int = 6,
         minimum_turns: int = 3,
@@ -53,7 +53,6 @@ class PhaseBSessionManager:
         session_id = str(uuid4())
         state = build_initial_state(
             session_id=session_id,
-            difficulty=difficulty,
             scenario_preference=scenario_preference,
             voice_id=voice_id,
             max_turns=max_turns,

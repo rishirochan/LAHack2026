@@ -10,17 +10,10 @@ import {
 } from '@/hooks/usePhaseBConversation';
 import { useVoiceSettings } from '@/context/VoiceSettingsContext';
 
-const difficultyOptions = [
-  { label: 'Warm', value: 3, description: 'Friendly, easy social momentum.' },
-  { label: 'Balanced', value: 5, description: 'Natural but a little probing.' },
-  { label: 'Sharp', value: 8, description: 'More pressure, less free help.' },
-] as const;
-
 const MIN_RECORDING_SECONDS = 2;
 
 export default function ConversationPage() {
   const { selectedVoiceId, speechRate } = useVoiceSettings();
-  const [difficulty, setDifficulty] = useState<number>(difficultyOptions[1].value);
   const [isRecording, setIsRecording] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(45);
   const [localError, setLocalError] = useState('');
@@ -64,7 +57,7 @@ export default function ConversationPage() {
   async function handleStart() {
     setLocalError('');
     try {
-      await startSession(difficulty);
+      await startSession();
     } catch (error) {
       setLocalError(getErrorMessage(error, 'Failed to start the conversation.'));
     }
@@ -236,27 +229,10 @@ export default function ConversationPage() {
               transcription drives the next reply, and video analysis keeps running in the background.
             </p>
 
-            <div className="mt-8 space-y-3">
-              {difficultyOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setDifficulty(option.value)}
-                  className={`flex w-full items-start justify-between rounded-2xl border px-4 py-4 text-left transition ${
-                    difficulty === option.value
-                      ? 'border-navy-500 bg-navy-50'
-                      : 'border-cream-200 bg-white hover:border-cream-300'
-                  }`}
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{option.label}</p>
-                    <p className="mt-1 text-sm text-slate-500">{option.description}</p>
-                  </div>
-                  <span className="rounded-full bg-cream-100 px-3 py-1 text-xs font-medium text-slate-600">
-                    {option.value}/10
-                  </span>
-                </button>
-              ))}
+            <div className="mt-8 space-y-3 rounded-2xl border border-cream-200 bg-cream-50 p-4 text-sm text-slate-600">
+              <p>One peer persona is generated for the full session, then each response shapes the next turn.</p>
+              <p>Voice playback follows your selected Settings voice when one is configured.</p>
+              <p>Sessions end naturally after enough momentum has been established or when you end them manually.</p>
             </div>
 
             <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
@@ -848,7 +824,7 @@ function encodeWav(chunks: Float32Array[], sampleRate: number) {
   let offset = 44;
   for (const sample of audioData) {
     const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF, true);
     offset += 2;
   }
 

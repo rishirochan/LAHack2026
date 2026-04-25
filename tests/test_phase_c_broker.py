@@ -123,7 +123,6 @@ class PhaseCBrokerTests(unittest.TestCase):
                     "recording_duration_ms": 20000,
                 },
             },
-            difficulty=5,
         )
 
         self.assertGreaterEqual(scorecard["overall_score"], 0)

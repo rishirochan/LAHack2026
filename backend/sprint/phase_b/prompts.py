@@ -27,11 +27,10 @@ Rules:
 """
 
 
-def build_setup_user(*, difficulty: int, scenario_preference: str | None) -> str:
+def build_setup_user(*, scenario_preference: str | None) -> str:
     preference = scenario_preference or "no explicit preference"
     return (
-        f"Generate a Phase B conversation setup.\n"
-        f"Difficulty: {difficulty}/10.\n"
+        "Generate a Phase B conversation setup.\n"
         f"Scenario preference: {preference}.\n"
         "Make the situation socially realistic and worth at least three back-and-forth turns."
     )
@@ -51,7 +50,6 @@ def build_peer_reply_user(
     peer_profile: dict[str, str],
     starter_topic: str | None,
     conversation_history: list[dict[str, str]],
-    difficulty: int,
 ) -> str:
     history = "\n".join(
         f"{'Peer' if item['role'] == 'assistant' else 'User'}: {item['content']}"
@@ -65,8 +63,7 @@ def build_peer_reply_user(
         f"- energy: {peer_profile.get('energy', '')}\n"
         f"- goal: {peer_profile.get('conversation_goal', '')}\n"
         f"- scenario: {peer_profile.get('scenario', '')}\n\n"
-        f"Starter topic: {starter_topic or ''}\n"
-        f"Difficulty: {difficulty}/10\n\n"
+        f"Starter topic: {starter_topic or ''}\n\n"
         f"Conversation so far:\n{history}\n\n"
         "Reply as the peer with the next spoken line."
     )

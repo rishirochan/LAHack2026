@@ -118,8 +118,7 @@ class PhaseBState(TypedDict):
 
     session_id: str
     scenario: str | None
-    difficulty: int
-    scenario_preference: str | None
+    scenario_preference: Scenario | None
     voice_id: str | None
     peer_profile: PeerProfile | None
     starter_topic: str | None
@@ -138,8 +137,7 @@ class PhaseBState(TypedDict):
 
 def build_initial_state(
     session_id: str,
-    difficulty: int,
-    scenario_preference: str | None = None,
+    scenario_preference: Scenario | None = None,
     max_turns: int = 6,
     minimum_turns: int = 3,
     voice_id: str | None = None,
@@ -149,7 +147,6 @@ def build_initial_state(
     return {
         "session_id": session_id,
         "scenario": None,
-        "difficulty": difficulty,
         "scenario_preference": scenario_preference,
         "voice_id": voice_id,
         "peer_profile": None,
@@ -193,7 +190,6 @@ def build_turn_state(turn_index: int, prompt_text: str) -> TurnState:
 class StartConversationRequest(BaseModel):
     """Body for POST /api/phase-b/sessions."""
 
-    difficulty: int = Field(ge=1, le=10)
     scenario_preference: Scenario | None = None
     voice_id: str | None = None
     max_turns: int = Field(default=6, ge=3, le=8)
@@ -218,8 +214,7 @@ class SessionStateResponse(BaseModel):
 
     session_id: str
     scenario: str | None
-    difficulty: int
-    scenario_preference: str | None
+    scenario_preference: Scenario | None
     voice_id: str | None
     peer_profile: dict[str, Any] | None
     starter_topic: str | None
