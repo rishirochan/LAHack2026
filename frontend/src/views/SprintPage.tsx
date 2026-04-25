@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2, Mic, RefreshCw, Square } from 'lucide-react';
 import {
   emotionOptions,
+  type DisplayMetric,
+  type PhaseADerivedMetrics,
   type SessionSetup,
   usePhaseASession,
 } from '@/hooks/usePhaseASession';
@@ -12,8 +14,7 @@ const MAX_RECORDING_SECONDS = 20;
 const MIN_RECORDING_SECONDS = 2;
 const processingStages = [
   'Uploading recording',
-  'Analyzing facial emotion',
-  'Analyzing vocal emotion',
+  'Analyzing facial and vocal emotion',
   'Transcribing speech',
   'Generating critique',
   'Preparing playback',
@@ -366,19 +367,27 @@ export default function SprintPage() {
       </section>
 
       {(status === 'critique' || roundResult) && (
-        <section className="grid gap-6 lg:grid-cols-[1fr_240px]">
+        <section className="grid gap-6 lg:grid-cols-[1fr_280px]">
           <div className="rounded-3xl border border-cream-200 bg-white p-6">
             <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-navy-500">Coach Critique</p>
             <p className="text-lg leading-relaxed text-slate-700">{critique}</p>
             <div className="mt-6 flex flex-wrap gap-3">
               <button
-                onClick={() => void chooseContinue(true)}
+                onClick={() => {
+                  void chooseContinue(true).catch((error: unknown) => {
+                    setLocalError(error instanceof Error ? error.message : 'Could not send session decision.');
+                  });
+                }}
                 className="rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
               >
                 Try Again
               </button>
               <button
-                onClick={() => void chooseContinue(false)}
+                onClick={() => {
+                  void chooseContinue(false).catch((error: unknown) => {
+                    setLocalError(error instanceof Error ? error.message : 'Could not send session decision.');
+                  });
+                }}
                 className="rounded-full border border-cream-300 px-5 py-3 text-sm font-medium text-slate-700 transition-all hover:bg-cream-100"
               >
                 End Session
@@ -386,7 +395,11 @@ export default function SprintPage() {
             </div>
           </div>
 
-          <ScoreCard score={roundResult?.match_score ?? 0} />
+          <MeasuredSignalsCard
+            score={roundResult?.derived_metrics?.overall_match_score ?? roundResult?.match_score ?? 0}
+            displayMetrics={roundResult?.display_metrics ?? []}
+            derivedMetrics={roundResult?.derived_metrics}
+          />
         </section>
       )}
     </div>
@@ -416,6 +429,88 @@ function ProcessingStages({ activeStage }: { activeStage: string }) {
             {stage}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function MeasuredSignalsCard({
+  score,
+  displayMetrics,
+  derivedMetrics,
+}: {
+  score: number;
+  displayMetrics: DisplayMetric[];
+  derivedMetrics?: PhaseADerivedMetrics;
+}) {
+  const targetMoments = derivedMetrics?.top_target_moments ?? [];
+  const mismatchMoments = derivedMetrics?.top_mismatch_moments ?? [];
+  const dataQualityFlags = derivedMetrics?.data_quality_flags ?? [];
+  const targetMomentsAreAggregate = targetMoments.some((moment) => moment.is_aggregate || moment.timestamp_ms === null);
+
+  return (
+    <div className="space-y-4">
+      <ScoreCard score={score} />
+      <div className="rounded-3xl border border-cream-200 bg-white p-6">
+        <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">Measured Signals</p>
+        <div className="space-y-3">
+          {displayMetrics.map((metric) => (
+            <div key={metric.key} className="rounded-2xl bg-cream-100 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-900">{metric.label}</p>
+                <span className="text-sm font-semibold text-navy-600">{metric.display_value}</span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">{metric.description}</p>
+            </div>
+          ))}
+        </div>
+
+        {(targetMoments.length > 0 || mismatchMoments.length > 0) && (
+          <div className="mt-5 space-y-4">
+            {targetMoments.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  {targetMomentsAreAggregate ? 'Strongest target signals' : 'Strongest target moments'}
+                </p>
+                <div className="mt-2 space-y-2">
+                  {targetMoments.map((moment, index) => (
+                    <p key={`${moment.timestamp_ms}-${moment.emotion_type}-${index}`} className="text-sm text-slate-600">
+                      {moment.timestamp_ms === null ? formatSignalSource(moment.source) : formatTimestamp(moment.timestamp_ms)}:{' '}
+                      {moment.emotion_type} at {Math.round(moment.confidence * 100)}%
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mismatchMoments.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Notable mismatches</p>
+                <div className="mt-2 space-y-2">
+                  {mismatchMoments.map((moment, index) => (
+                    <p key={`${moment.timestamp_ms}-${moment.word}-${index}`} className="text-sm text-slate-600">
+                      {formatTimestamp(moment.timestamp_ms)} on "{moment.word}": face read {moment.face_emotion_type}, voice read{' '}
+                      {moment.voice_emotion_type}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {dataQualityFlags.length > 0 && (
+          <div className="mt-5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Data quality</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {dataQualityFlags.map((flag) => (
+                <span key={flag} className="rounded-full bg-cream-100 px-3 py-1 text-xs text-slate-600">
+                  {humanizeFlag(flag)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -451,10 +546,28 @@ function ScoreCard({ score }: { score: number }) {
         </div>
       </div>
       <p className="mt-4 text-center text-sm text-slate-500">
-        Based on the strongest matching facial emotion event.
+        Based on the overall response trend, not just one peak emotion spike.
       </p>
     </div>
   );
+}
+
+function formatTimestamp(timestampMs: number) {
+  return `${(timestampMs / 1000).toFixed(1)}s`;
+}
+
+function humanizeFlag(flag: string) {
+  return flag.replaceAll('_', ' ');
+}
+
+function formatSignalSource(source?: string | null) {
+  if (!source) {
+    return 'Overall';
+  }
+  if (source.startsWith('overall_')) {
+    return 'Overall';
+  }
+  return source.replaceAll('_', ' ');
 }
 
 function getSupportedMimeType(candidates: string[]) {

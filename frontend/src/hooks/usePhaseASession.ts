@@ -27,11 +27,51 @@ export type SessionSetup = {
   targetEmotion: TargetEmotion;
 };
 
+export type DisplayMetric = {
+  key: string;
+  label: string;
+  value?: number | string | null;
+  display_value: string;
+  description: string;
+};
+
+export type PhaseADerivedMetrics = {
+  match_score?: number;
+  overall_match_score?: number;
+  peak_match_score?: number;
+  filler_word_count?: number;
+  filler_rate?: number;
+  target_frame_ratio?: number;
+  target_presence_score?: number;
+  average_target_confidence?: number;
+  face_voice_alignment_ratio?: number;
+  aggregate_face_voice_alignment_ratio?: number;
+  emotion_stability_score?: number;
+  top_target_moments?: Array<{
+    timestamp_ms: number | null;
+    emotion_type: string;
+    confidence: number;
+    is_aggregate?: boolean;
+    source?: string | null;
+  }>;
+  top_mismatch_moments?: Array<{
+    timestamp_ms: number;
+    word: string;
+    face_emotion_type: string;
+    voice_emotion_type: string;
+    face_confidence: number;
+    voice_confidence: number;
+  }>;
+  data_quality_flags?: string[];
+};
+
 export type RoundResult = {
   critique: string;
   match_score: number;
   filler_words_found: string[];
   filler_word_count: number;
+  derived_metrics?: PhaseADerivedMetrics;
+  display_metrics?: DisplayMetric[];
 };
 
 export type SessionSummary = {
@@ -45,6 +85,8 @@ export type SessionSummary = {
     match_score: number;
     filler_words_found: string[];
     filler_word_count: number;
+    derived_metrics?: PhaseADerivedMetrics;
+    display_metrics?: DisplayMetric[];
   }>;
 };
 
@@ -123,6 +165,7 @@ export function usePhaseASession() {
       return;
     }
 
+    setErrorMessage('');
     const response = await fetch(`${API_URL}/api/phase-a/sessions/${sessionId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -130,7 +173,11 @@ export function usePhaseASession() {
     });
 
     if (!response.ok) {
-      throw new Error('Could not send session decision.');
+      const errorDetail = await response
+        .json()
+        .then((payload) => String(payload.detail ?? ''))
+        .catch(() => '');
+      throw new Error(errorDetail || 'Could not send session decision.');
     }
 
     if (continueSession) {
