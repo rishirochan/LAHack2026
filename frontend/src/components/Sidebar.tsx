@@ -53,17 +53,20 @@ export default function Sidebar() {
       }`}
     >
       {/* Profile */}
-      <div className={`flex items-center gap-3 p-4 ${expanded ? '' : 'justify-center'}`}>
-        <div className="w-10 h-10 rounded-full bg-navy-500 text-white flex items-center justify-center text-sm font-semibold shrink-0">
+      <Link
+        href="/profile"
+        className={`flex items-center gap-3 p-4 rounded-xl mx-2 mt-1 transition-colors hover:bg-cream-200 ${expanded ? '' : 'justify-center'} ${pathname === '/profile' ? 'bg-navy-500 hover:bg-navy-600' : ''}`}
+      >
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold shrink-0 ${pathname === '/profile' ? 'bg-white text-navy-500' : 'bg-navy-500 text-white'}`}>
           JD
         </div>
         {expanded && (
           <div className="transition-opacity duration-300">
-            <p className="text-sm font-medium text-slate-900">Jordan D.</p>
-            <p className="text-xs text-slate-500">Practicing daily</p>
+            <p className={`text-sm font-medium ${pathname === '/profile' ? 'text-white' : 'text-slate-900'}`}>Jordan D.</p>
+            <p className={`text-xs ${pathname === '/profile' ? 'text-navy-200' : 'text-slate-500'}`}>View profile</p>
           </div>
         )}
-      </div>
+      </Link>
 
       {/* Main Nav */}
       <nav className="flex flex-col gap-1 mt-2">
