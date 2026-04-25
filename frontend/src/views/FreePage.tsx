@@ -1,8 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
-import { RotateCcw, Save } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2, Mic, RotateCcw, Square, Video } from 'lucide-react';
+
+import { EmotionTimeline } from '@/components/EmotionTimeline';
+import { PhaseCScorecard } from '@/components/PhaseCScorecard';
+import { usePhaseCSession } from '@/hooks/usePhaseCSession';
+import { getPhaseCMergedChunks, useSession } from '@/hooks/useSessions';
 
 const focusOptions = [
   'Filler words',
@@ -12,290 +18,458 @@ const focusOptions = [
   'Word repetition',
 ];
 
-const fillerWordData = [
-  { word: 'um', count: 12 },
-  { word: 'like', count: 8 },
-  { word: 'uh', count: 6 },
-  { word: 'you know', count: 5 },
-  { word: 'so', count: 4 },
-  { word: 'actually', count: 3 },
-];
-
-const emotionTimeline = [
-  { emotion: 'Calm', color: '#2D5BE3', duration: 45 },
-  { emotion: 'Confident', color: '#10B981', duration: 30 },
-  { emotion: 'Nervous', color: '#F59E0B', duration: 15 },
-  { emotion: 'Enthusiastic', color: '#EF4444', duration: 25 },
-  { emotion: 'Calm', color: '#2D5BE3', duration: 35 },
-];
-
-const momentTimeline = [
-  { time: '0:15', color: '#F59E0B', label: 'Filler words spike', detail: '3 "ums" in 10 seconds' },
-  { time: '0:34', color: '#2D5BE3', label: 'Strong eye contact', detail: 'Sustained 8+ seconds' },
-  { time: '1:02', color: '#10B981', label: 'Emotion shift', detail: 'Moved from calm to confident' },
-  { time: '1:28', color: '#EF4444', label: 'Pace increased', detail: 'WPM jumped from 120 to 165' },
-  { time: '1:55', color: '#2D5BE3', label: 'Good pause', detail: 'Strategic 3-second silence' },
-  { time: '2:30', color: '#F59E0B', label: 'Word repetition', detail: '"Really" used 4 times' },
-  { time: '2:45', color: '#10B981', label: 'Strong closing', detail: 'Confident final statement' },
-];
-
-function formatTime(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
+function formatTime(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 export default function FreePage() {
+  const router = useRouter();
   const [activeFocus, setActiveFocus] = useState<string[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordTime, setRecordTime] = useState(0);
-  const [showResults, setShowResults] = useState(false);
-  const [waveformBars, setWaveformBars] = useState<number[]>(Array(32).fill(4));
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const waveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const {
+    status,
+    sessionId,
+    scorecard,
+    writtenSummary,
+    processingStage,
+    errorMessage,
+    recordSeconds,
+    maxSeconds,
+    waveformBars,
+    chunkUploads,
+    recordedVideoUrl,
+    transcriptPreview,
+    previewRef,
+    startSession,
+    stopRecording,
+    retryRecording,
+    resetAll,
+  } = usePhaseCSession();
+  const {
+    data: persistedSession,
+    loading: persistedSessionLoading,
+    error: persistedSessionError,
+    refetch: refetchPersistedSession,
+  } = useSession(status === 'results' && sessionId ? sessionId : null);
+  const mergedChunks = getPhaseCMergedChunks(persistedSession);
 
   const toggleFocus = (option: string) => {
-    setActiveFocus((prev) =>
-      prev.includes(option) ? prev.filter((o) => o !== option) : [...prev, option]
+    setActiveFocus((current) =>
+      current.includes(option)
+        ? current.filter((item) => item !== option)
+        : [...current, option],
     );
   };
 
-  const startRecording = () => {
-    setIsRecording(true);
-    setRecordTime(0);
-    setShowResults(false);
-    intervalRef.current = setInterval(() => {
-      setRecordTime((t) => t + 1);
-    }, 1000);
-    waveRef.current = setInterval(() => {
-      setWaveformBars(
-        Array(32)
-          .fill(0)
-          .map(() => Math.floor(4 + Math.random() * 40))
-      );
-    }, 150);
-  };
-
-  const stopRecording = () => {
-    setIsRecording(false);
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (waveRef.current) clearInterval(waveRef.current);
-    setWaveformBars(Array(32).fill(4));
-    setShowResults(true);
+  const beginSession = async () => {
+    await startSession();
   };
 
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (waveRef.current) clearInterval(waveRef.current);
-    };
-  }, []);
+    if (status === 'results' && sessionId) {
+      const retryDelaysMs = [0, 700, 2000];
+      const timeoutIds = retryDelaysMs.map((delayMs) =>
+        window.setTimeout(() => {
+          void refetchPersistedSession();
+        }, delayMs),
+      );
 
-  const maxCount = Math.max(...fillerWordData.map((d) => d.count));
+      return () => {
+        timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      };
+    }
+  }, [refetchPersistedSession, sessionId, status]);
+
+  const showSetup = status === 'setup';
+  const showActiveSession =
+    status === 'ready' ||
+    status === 'recording' ||
+    status === 'uploading' ||
+    status === 'processing' ||
+    status === 'error';
+  const isRecording = status === 'recording';
+  const isBusy = status === 'uploading' || status === 'processing';
+  const captureStepActive = status !== 'setup';
+  const transcribeStepActive = status === 'processing' || status === 'results';
+  const scorecardStepActive = status === 'processing' || status === 'results';
+  const resultsStepActive = status === 'results';
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* Header */}
+    <div className="mx-auto max-w-5xl">
       <div className="mb-6">
         <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
           Free Speaking
         </h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Give a speech or talk freely — full analysis at the end
+        <p className="mt-1 text-sm text-slate-500">
+          Record one uninterrupted speaking session and get a full broker scorecard.
         </p>
       </div>
 
-      {/* Focus Chips */}
-      <div className="mb-6">
-        <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-medium">
-          Focus areas (optional)
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {focusOptions.map((option) => (
-            <button
-              key={option}
-              onClick={() => toggleFocus(option)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
-                activeFocus.includes(option)
-                  ? 'bg-navy-500 text-white shadow-md'
-                  : 'bg-cream-200 text-slate-600 hover:bg-cream-300'
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      </div>
+      <AnimatePresence mode="wait">
+        {showSetup && (
+          <motion.div
+            key="setup"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            className="space-y-6"
+          >
+            <div className="grid gap-6 lg:grid-cols-[1.25fr_0.95fr]">
+              <div className="rounded-2xl border border-cream-300 bg-white p-8 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                  Session Setup
+                </p>
+                <h2 className="mt-3 font-['Playfair_Display'] text-3xl font-semibold text-slate-900">
+                  Speak freely for up to 45 seconds
+                </h2>
+                <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500">
+                  Phase C scores pacing, filler words, repetition, and emotional steadiness across
+                  five-second chunks. Start the camera, choose the delivery cues you want to keep in
+                  mind, and talk through any topic you want.
+                </p>
 
-      {/* Waveform */}
-      <div className="bg-white rounded-2xl border border-cream-300 p-8 mb-6 shadow-sm">
-        <div className="flex items-end justify-center gap-[3px] h-24 mb-6">
-          {waveformBars.map((height, i) => (
-            <motion.div
-              key={i}
-              animate={{ height: `${height * 3}px` }}
-              transition={{ duration: 0.1 }}
-              className={`w-1.5 rounded-full ${
-                isRecording ? 'bg-navy-500' : 'bg-cream-300'
-              }`}
-            />
-          ))}
-        </div>
-
-        {/* Timer */}
-        <div className="text-center mb-6">
-          <p className="text-3xl font-mono font-semibold text-slate-900">
-            {formatTime(recordTime)}
-          </p>
-        </div>
-
-        {/* Controls */}
-        <div className="flex justify-center gap-4">
-          {!showResults && (
-            <button
-              onClick={isRecording ? stopRecording : startRecording}
-              className={`px-8 py-3 rounded-full font-medium text-sm transition-all shadow-md ${
-                isRecording
-                  ? 'bg-red-500 text-white hover:bg-red-600'
-                  : 'bg-navy-500 text-white hover:bg-navy-600'
-              }`}
-            >
-              {isRecording ? 'Stop' : 'Start Recording'}
-            </button>
-          )}
-          {showResults && (
-            <button
-              onClick={() => {
-                setShowResults(false);
-                setRecordTime(0);
-              }}
-              className="px-6 py-3 rounded-full bg-navy-500 text-white text-sm font-medium hover:bg-navy-600 transition-colors shadow-md"
-            >
-              Record again
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Results */}
-      {showResults && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          {/* 2-col grid: Filler words + Emotion timeline */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            {/* Filler Word Cloud */}
-            <div className="bg-white rounded-2xl border border-cream-300 p-6 shadow-sm">
-              <h3 className="text-sm font-medium text-slate-700 mb-4">
-                Filler Word Frequency
-              </h3>
-              <div className="flex flex-wrap items-end gap-3">
-                {fillerWordData.map((d) => (
-                  <div key={d.word} className="flex flex-col items-center gap-1">
-                    <span
-                      className="font-medium"
-                      style={{
-                        fontSize: `${0.75 + (d.count / maxCount) * 1.25}rem`,
-                        color:
-                          d.count > 8
-                            ? '#EF4444'
-                            : d.count > 5
-                            ? '#F59E0B'
-                            : '#64748B',
-                      }}
-                    >
-                      {d.word}
-                    </span>
-                    <span className="text-xs text-slate-400">{d.count}x</span>
+                <div className="mt-8">
+                  <p className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                    Focus Areas
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {focusOptions.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => toggleFocus(option)}
+                        className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                          activeFocus.includes(option)
+                            ? 'bg-navy-500 text-white shadow-sm'
+                            : 'bg-cream-100 text-slate-600 hover:bg-cream-200'
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
 
-            {/* Emotion Timeline */}
-            <div className="bg-white rounded-2xl border border-cream-300 p-6 shadow-sm">
-              <h3 className="text-sm font-medium text-slate-700 mb-4">
-                Emotion Timeline
-              </h3>
-              <div className="flex items-center gap-1 h-12">
-                {emotionTimeline.map((seg, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ scaleX: 0 }}
-                    animate={{ scaleX: 1 }}
-                    transition={{ delay: i * 0.1, duration: 0.4 }}
-                    style={{
-                      backgroundColor: seg.color,
-                      width: `${seg.duration}%`,
-                    }}
-                    className="h-full rounded-sm origin-left relative group"
-                  >
-                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-xs px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10">
-                      {seg.emotion} ({seg.duration}s)
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-              <div className="flex justify-between text-xs text-slate-400 mt-2">
-                <span>0:00</span>
-                <span>{formatTime(recordTime || 150)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Moment-by-moment timeline */}
-          <div className="bg-white rounded-2xl border border-cream-300 p-6 shadow-sm mb-6">
-            <h3 className="text-sm font-medium text-slate-700 mb-4">
-              Moment-by-Moment
-            </h3>
-            <div className="space-y-0">
-              {momentTimeline.map((moment, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.08 }}
-                  className={`flex items-start gap-4 py-3 ${
-                    i < momentTimeline.length - 1 ? 'border-b border-cream-100' : ''
-                  }`}
-                >
-                  <span className="text-xs font-mono text-slate-400 w-10 shrink-0 mt-0.5">
-                    {moment.time}
-                  </span>
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0 mt-1"
-                    style={{ backgroundColor: moment.color }}
-                  />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-slate-800">
-                      {moment.label}
+              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-[linear-gradient(135deg,#0f172a_0%,#19345f_55%,#f4c978_140%)] p-8 text-white shadow-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-white/65">What to expect</p>
+                <div className="mt-6 grid gap-4">
+                  <div className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm">
+                    <p className="text-sm font-semibold">Live recording</p>
+                    <p className="mt-1 text-sm text-white/75">
+                      Camera preview, microphone waveform, and automatic five-second chunk uploads.
                     </p>
-                    <p className="text-xs text-slate-500">{moment.detail}</p>
                   </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
+                  <div className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm">
+                    <p className="text-sm font-semibold">Realtime processing</p>
+                    <p className="mt-1 text-sm text-white/75">
+                      Chunks are analyzed in the background while the full recording is transcribed.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm">
+                    <p className="text-sm font-semibold">Final output</p>
+                    <p className="mt-1 text-sm text-white/75">
+                      You get an overall score, pacing analysis, repetition flags, and a coaching summary.
+                    </p>
+                  </div>
+                </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => {
-                setShowResults(false);
-                setRecordTime(0);
-              }}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-cream-300 text-slate-600 text-sm font-medium hover:bg-cream-200 transition-colors"
-            >
-              <RotateCcw size={14} /> Record again
-            </button>
-            <button className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-navy-500 text-white text-sm font-medium hover:bg-navy-600 transition-colors shadow-md">
-              <Save size={14} /> Save to replays
-            </button>
-          </div>
-        </motion.div>
-      )}
+                <button
+                  type="button"
+                  onClick={() => void beginSession()}
+                  className="mt-8 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 transition-transform hover:-translate-y-0.5"
+                >
+                  <Video size={16} />
+                  Start Session
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {showActiveSession && (
+          <motion.div
+            key="active-session"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]"
+          >
+            <div className="overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-sm">
+              <div className="border-b border-cream-200 px-6 py-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Camera Feed</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {isRecording
+                        ? 'Live preview while the session is recording.'
+                        : isBusy
+                        ? 'Your recording has stopped. Processing is underway.'
+                        : 'Start or retry the recording when you are ready.'}
+                    </p>
+                  </div>
+                  <div className="rounded-full bg-cream-100 px-3 py-1 text-xs font-medium text-slate-600">
+                    Max {formatTime(maxSeconds)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6">
+                <div className="relative aspect-video overflow-hidden rounded-[24px] bg-slate-950">
+                  {recordedVideoUrl && !isRecording ? (
+                    <video
+                      src={recordedVideoUrl}
+                      controls
+                      playsInline
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <video
+                      ref={previewRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="h-full w-full object-cover"
+                    />
+                  )}
+
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/85 to-transparent px-5 pb-5 pt-16">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm">
+                        <span
+                          className={`h-2.5 w-2.5 rounded-full ${
+                            isRecording ? 'animate-pulse bg-rose-400' : 'bg-white/50'
+                          }`}
+                        />
+                        {isRecording ? 'Recording' : isBusy ? 'Processing' : status === 'error' ? 'Needs retry' : 'Ready'}
+                      </div>
+                      <div className="rounded-full bg-black/35 px-3 py-2 font-mono text-sm text-white backdrop-blur-sm">
+                        {formatTime(recordSeconds)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Mic Activity</p>
+                    <p className="text-xs text-slate-500">
+                      {isRecording ? 'Live analyser' : isBusy ? processingStage || 'Preparing results' : 'Waiting'}
+                    </p>
+                  </div>
+                  <div className="flex h-28 items-end justify-center gap-[3px] rounded-[22px] bg-cream-50 px-4 py-5">
+                    {waveformBars.map((barHeight, index) => (
+                      <motion.div
+                        key={index}
+                        animate={{ height: `${barHeight * 2.2}px` }}
+                        transition={{ duration: 0.12 }}
+                        className={`w-1.5 rounded-full ${
+                          isRecording ? 'bg-navy-500' : 'bg-cream-300'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Session Status</p>
+                <div className="mt-4 space-y-4">
+                  <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
+                    <span className="text-sm font-medium text-slate-700">Time elapsed</span>
+                    <span className="font-mono text-sm text-slate-900">
+                      {formatTime(recordSeconds)} / {formatTime(maxSeconds)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
+                    <span className="text-sm font-medium text-slate-700">Chunk uploads</span>
+                    <div className="flex items-center gap-2">
+                      {chunkUploads.length === 0 && (
+                        <span className="text-xs text-slate-400">No completed chunks yet</span>
+                      )}
+                      {chunkUploads.map((chunk) => (
+                        <span
+                          key={chunk.chunkIndex}
+                          title={`Chunk ${chunk.chunkIndex + 1}: ${chunk.status}`}
+                          className={`h-3 w-3 rounded-full ${
+                            chunk.status === 'uploaded'
+                              ? 'bg-emerald-500'
+                              : chunk.status === 'failed'
+                              ? 'bg-rose-500'
+                              : 'bg-amber-400'
+                          }`}
+                        />
+                      ))}
+                      {isRecording && <span className="h-3 w-3 animate-pulse rounded-full bg-navy-500" />}
+                    </div>
+                  </div>
+                </div>
+
+                {errorMessage && (
+                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+                    {errorMessage}
+                  </div>
+                )}
+
+                {transcriptPreview && (
+                  <div className="mt-4 rounded-2xl border border-cream-200 bg-cream-50 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Transcript Preview</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{transcriptPreview}</p>
+                  </div>
+                )}
+
+                <div className="mt-6 flex flex-wrap gap-3">
+                  {isRecording && (
+                    <button
+                      type="button"
+                      onClick={() => void stopRecording()}
+                      className="inline-flex items-center gap-2 rounded-full bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-rose-600"
+                    >
+                      <Square size={16} />
+                      Stop Recording
+                    </button>
+                  )}
+
+                  {!isRecording && !isBusy && (
+                    <button
+                      type="button"
+                      onClick={() => void retryRecording()}
+                      className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                    >
+                      <Mic size={16} />
+                      {status === 'error' ? 'Try Again' : 'Start Recording'}
+                    </button>
+                  )}
+
+                  {(status === 'error' || status === 'ready') && (
+                    <button
+                      type="button"
+                      onClick={resetAll}
+                      className="inline-flex items-center gap-2 rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
+                    >
+                      <RotateCcw size={16} />
+                      Start Over
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-[linear-gradient(135deg,#fff8eb_0%,#fef6dc_50%,#fffdf6_100%)] p-6 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Processing Flow</p>
+                <div className="mt-5 space-y-3">
+                  {[
+                    { label: 'Capture chunks', active: captureStepActive },
+                    { label: 'Transcribe audio', active: transcribeStepActive },
+                    { label: 'Run scorecard', active: scorecardStepActive },
+                    { label: 'Return results', active: resultsStepActive },
+                  ].map((step, index) => (
+                    <div key={step.label} className="flex items-center gap-3">
+                      <div
+                        className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${
+                          step.active ? 'bg-navy-500 text-white' : 'bg-white text-slate-400'
+                        }`}
+                      >
+                        {index + 1}
+                      </div>
+                      <div className="flex-1 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate-600">
+                        {step.label}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {isBusy && (
+                  <div className="mt-5 inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+                    <Loader2 size={16} className="animate-spin text-navy-500" />
+                    {processingStage || 'Working through the session analysis'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {status === 'results' && (
+          <motion.div
+            key="results"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            className="space-y-6"
+          >
+            <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-sm">
+                <div className="border-b border-cream-200 px-6 py-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Recorded Session</p>
+                  <h2 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+                    Final analysis
+                  </h2>
+                </div>
+                <div className="p-6">
+                  {recordedVideoUrl ? (
+                    <video
+                      src={recordedVideoUrl}
+                      controls
+                      playsInline
+                      className="aspect-video w-full rounded-[24px] bg-slate-950 object-cover"
+                    />
+                  ) : (
+                    <div className="flex aspect-video items-center justify-center rounded-[24px] bg-cream-50 text-sm text-slate-400">
+                      Recording preview unavailable
+                    </div>
+                  )}
+
+                  <div className="mt-5 grid gap-4">
+                    <div className="rounded-2xl bg-cream-50 px-4 py-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Transcript</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {transcriptPreview || 'Transcript preview unavailable for this session.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <EmotionTimeline
+                  chunks={mergedChunks}
+                  loading={persistedSessionLoading}
+                  errorMessage={persistedSessionError}
+                />
+                {persistedSessionLoading && (
+                  <div className="inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+                    <Loader2 size={16} className="animate-spin text-navy-500" />
+                    Loading persisted chunk analysis
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <PhaseCScorecard scorecard={scorecard} writtenSummary={writtenSummary} />
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={resetAll}
+                className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+              >
+                <RotateCcw size={16} />
+                Record Again
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/home')}
+                className="rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
+              >
+                Back to Home
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

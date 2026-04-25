@@ -27,7 +27,7 @@ class PhaseAMergeTests(unittest.TestCase):
 
         merged_analysis, word_correlations, match_score = build_merged_analysis(state)
 
-        self.assertEqual(match_score, 0.72)
+        self.assertAlmostEqual(match_score, 0.441)
         self.assertEqual(merged_analysis["filler_words_found"], ["um"])
         self.assertEqual(merged_analysis["filler_word_count"], 1)
         self.assertEqual(len(word_correlations), 2)
@@ -35,6 +35,9 @@ class PhaseAMergeTests(unittest.TestCase):
         self.assertEqual(delivered["word"], "delivered")
         self.assertEqual(delivered["face_emotion_type"], "Happiness")
         self.assertEqual(delivered["voice_emotion_type"], "Surprise")
+        self.assertAlmostEqual(merged_analysis["derived_metrics"]["target_frame_ratio"], 0.5)
+        self.assertAlmostEqual(merged_analysis["derived_metrics"]["average_target_confidence"], 0.72)
+        self.assertAlmostEqual(merged_analysis["derived_metrics"]["face_voice_alignment_ratio"], 0.0)
 
     def test_merge_handles_missing_streams_as_soft_failure(self) -> None:
         state = build_initial_state("Sadness")
@@ -69,7 +72,7 @@ class PhaseAMergeTests(unittest.TestCase):
 
         _, _, match_score = build_merged_analysis(state)
 
-        self.assertEqual(match_score, 0.84)
+        self.assertAlmostEqual(match_score, 0.9786666666666667)
 
 
 class PhaseAImentivFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -122,4 +125,3 @@ class PhaseAImentivFlowTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

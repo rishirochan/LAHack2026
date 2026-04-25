@@ -42,7 +42,6 @@ async def generate_prompt(state: PhaseBState, config: RunnableConfig) -> dict[st
         system = build_prompt_system(
             scenario=state["scenario"],
             persona=state["persona"],
-            difficulty=state["difficulty"],
         )
         user = build_prompt_user(
             conversation_history=state["conversation_history"],
@@ -183,7 +182,6 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
 
     merged = {
         "persona": state["persona"],
-        "difficulty": state["difficulty"],
         "question_asked": current_turn.get("prompt_text", ""),
         "full_transcript": current_turn.get("transcript") or "",
         "transcript_words": [
@@ -285,7 +283,6 @@ async def end_session(state: PhaseBState, config: RunnableConfig) -> dict[str, A
     summary = {
         "session_id": session_id,
         "scenario": final_state["scenario"],
-        "difficulty": final_state["difficulty"],
         "total_turns": len(final_state["turns"]),
         "turns": [
             {

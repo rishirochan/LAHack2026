@@ -79,7 +79,6 @@ class PhaseBState(TypedDict):
 
     session_id: str
     scenario: Scenario
-    difficulty: int
     persona: Persona
     turn_index: int
     max_turns: int
@@ -93,7 +92,6 @@ class PhaseBState(TypedDict):
 def build_initial_state(
     session_id: str,
     scenario: Scenario,
-    difficulty: int,
     max_turns: int = 4,
 ) -> PhaseBState:
     """Create the default state for a new Phase B session."""
@@ -101,7 +99,6 @@ def build_initial_state(
     return {
         "session_id": session_id,
         "scenario": scenario,
-        "difficulty": difficulty,
         "persona": SCENARIO_TO_PERSONA[scenario],
         "turn_index": 0,
         "max_turns": max_turns,
@@ -137,7 +134,6 @@ class StartConversationRequest(BaseModel):
     """Body for POST /api/phase-b/sessions."""
 
     scenario: Scenario
-    difficulty: int = Field(ge=1, le=10)
     max_turns: int = Field(default=4, ge=2, le=5)
 
 
@@ -153,7 +149,6 @@ class SessionStateResponse(BaseModel):
 
     session_id: str
     scenario: Scenario
-    difficulty: int
     persona: Persona
     turn_index: int
     max_turns: int

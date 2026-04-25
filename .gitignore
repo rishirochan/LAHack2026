@@ -55,3 +55,7 @@ Thumbs.db
 *.tmp
 *.temp
 .ipynb_checkpoints/
+
+.claude
+.agents
+.cursor

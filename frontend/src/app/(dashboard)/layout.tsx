@@ -2,6 +2,7 @@
 
 import AuthGate from '@/auth/AuthGate';
 import Sidebar from '@/components/Sidebar';
+import { SessionsProvider } from '@/context/SessionsContext';
 import { SidebarProvider, useSidebar } from '@/context/SidebarContext';
 
 function DashboardFrame({ children }: { children: React.ReactNode }) {
@@ -21,7 +22,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <AuthGate>
       <SidebarProvider>
-        <DashboardFrame>{children}</DashboardFrame>
+        <SessionsProvider>
+          <DashboardFrame>{children}</DashboardFrame>
+        </SessionsProvider>
       </SidebarProvider>
     </AuthGate>
   );

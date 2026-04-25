@@ -224,7 +224,7 @@ def derive_improvement_areas(
     return areas[:3]
 
 
-def build_scorecard(merged_analysis: dict[str, Any], difficulty: int) -> dict[str, Any]:
+def build_scorecard(merged_analysis: dict[str, Any]) -> dict[str, Any]:
     transcript_words = list(merged_analysis.get("transcript_words") or [])
     chunks = list(merged_analysis.get("chunks") or [])
     recording_duration_ms = int(merged_analysis.get("overall", {}).get("recording_duration_ms") or 0)
@@ -248,7 +248,6 @@ def build_scorecard(merged_analysis: dict[str, Any], difficulty: int) -> dict[st
     )
 
     return {
-        "difficulty": difficulty,
         "duration_seconds": duration_seconds,
         "transcript_word_count": len(transcript_words),
         "average_wpm": pacing["average_wpm"],
