@@ -8,6 +8,7 @@ import {
   type TurnAnalysis,
   usePhaseBConversation,
 } from '@/hooks/usePhaseBConversation';
+import { useVoiceSettings } from '@/context/VoiceSettingsContext';
 
 const difficultyOptions = [
   { label: 'Warm', value: 3, description: 'Friendly, easy social momentum.' },
@@ -18,6 +19,7 @@ const difficultyOptions = [
 const MIN_RECORDING_SECONDS = 2;
 
 export default function ConversationPage() {
+  const { selectedVoiceId, speechRate } = useVoiceSettings();
   const [difficulty, setDifficulty] = useState<number>(difficultyOptions[1].value);
   const [isRecording, setIsRecording] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(45);
@@ -46,7 +48,10 @@ export default function ConversationPage() {
     submitTurn,
     endSession,
     resetAll,
-  } = usePhaseBConversation();
+  } = usePhaseBConversation({
+    voiceId: selectedVoiceId,
+    speechRate,
+  });
 
   const activeError = localError || errorMessage;
   const conversationTurns = useMemo(() => {

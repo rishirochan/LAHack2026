@@ -120,6 +120,7 @@ class PhaseBState(TypedDict):
     scenario: str | None
     difficulty: int
     scenario_preference: str | None
+    voice_id: str | None
     peer_profile: PeerProfile | None
     starter_topic: str | None
     opening_line: str | None
@@ -141,6 +142,7 @@ def build_initial_state(
     scenario_preference: str | None = None,
     max_turns: int = 6,
     minimum_turns: int = 3,
+    voice_id: str | None = None,
 ) -> PhaseBState:
     """Create the default state for a new Phase B session."""
 
@@ -149,6 +151,7 @@ def build_initial_state(
         "scenario": None,
         "difficulty": difficulty,
         "scenario_preference": scenario_preference,
+        "voice_id": voice_id,
         "peer_profile": None,
         "starter_topic": None,
         "opening_line": None,
@@ -192,8 +195,15 @@ class StartConversationRequest(BaseModel):
 
     difficulty: int = Field(ge=1, le=10)
     scenario_preference: Scenario | None = None
+    voice_id: str | None = None
     max_turns: int = Field(default=6, ge=3, le=8)
     minimum_turns: int = Field(default=3, ge=3, le=5)
+
+
+class NextTurnRequest(BaseModel):
+    """Optional per-turn overrides for the next peer reply."""
+
+    voice_id: str | None = None
 
 
 class StartConversationResponse(BaseModel):
@@ -210,6 +220,7 @@ class SessionStateResponse(BaseModel):
     scenario: str | None
     difficulty: int
     scenario_preference: str | None
+    voice_id: str | None
     peer_profile: dict[str, Any] | None
     starter_topic: str | None
     opening_line: str | None

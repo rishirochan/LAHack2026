@@ -48,12 +48,14 @@ class PhaseBSessionManager:
         scenario_preference: str | None,
         max_turns: int = 6,
         minimum_turns: int = 3,
+        voice_id: str | None = None,
     ) -> ActiveConversation:
         session_id = str(uuid4())
         state = build_initial_state(
             session_id=session_id,
             difficulty=difficulty,
             scenario_preference=scenario_preference,
+            voice_id=voice_id,
             max_turns=max_turns,
             minimum_turns=minimum_turns,
         )
@@ -90,6 +92,11 @@ class PhaseBSessionManager:
         state["peer_profile"] = peer_profile
         state["starter_topic"] = starter_topic
         state["opening_line"] = opening_line
+        self.persist_state(session_id)
+
+    def set_voice_id(self, session_id: str, voice_id: str | None) -> None:
+        state = self.get_state(session_id)
+        state["voice_id"] = voice_id
         self.persist_state(session_id)
 
     def has_active_turn(self, session_id: str) -> bool:

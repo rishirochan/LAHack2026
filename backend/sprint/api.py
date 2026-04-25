@@ -7,7 +7,7 @@ from urllib.parse import quote
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -24,6 +24,7 @@ from backend.sprint.phase_a.schemas import (
 from backend.sprint.phase_a.session_manager import get_session_manager
 from backend.sprint.phase_b.schemas import (
     ChunkUploadMeta,
+    NextTurnRequest,
     SessionStateResponse,
     StartConversationRequest,
     StartConversationResponse,
@@ -112,6 +113,43 @@ async def get_persisted_session(session_id: str) -> dict[str, object]:
     return session
 
 
+@app.get("/api/tts/voices")
+async def list_tts_voices() -> dict[str, object]:
+    """Return normalized ElevenLabs voice metadata for the settings UI."""
+
+    from backend.shared.ai import get_ai_service
+    from backend.shared.ai.providers.elevenlabs import list_voice_options
+
+    ai_service = get_ai_service()
+    return {"voices": list_voice_options(ai_service.elevenlabs_client, ai_service.settings)}
+
+
+@app.post("/api/tts/preview")
+async def preview_tts_voice(payload: dict[str, object]) -> Response:
+    """Synthesize one short preview clip for a chosen voice."""
+
+    from backend.shared.ai import get_ai_service
+    from backend.sprint.phase_b.elevenlabs import synthesize_tts_audio
+
+    voice_id = str(payload.get("voice_id") or "").strip() or None
+    voice_name = str(payload.get("voice_name") or "").strip()
+    text = str(payload.get("text") or "").strip() or _build_voice_preview_text(voice_name)
+
+    if voice_id is None:
+        raise HTTPException(status_code=400, detail="A voice_id is required to preview TTS.")
+
+    try:
+        audio = await synthesize_tts_audio(
+            ai_service=get_ai_service(),
+            text=text,
+            voice_id=voice_id,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Voice preview failed: {error}") from error
+
+    return Response(content=audio, media_type="audio/mpeg")
+
+
 def _to_session_preview(session: dict) -> dict[str, object]:
     summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
     setup = session.get("setup") if isinstance(session.get("setup"), dict) else {}
@@ -140,6 +178,13 @@ def _to_session_preview(session: dict) -> dict[str, object]:
         "total_turns": summary.get("total_turns") if isinstance(summary, dict) else None,
         "round_count": len(summary.get("rounds", [])) if isinstance(summary.get("rounds"), list) else None,
     }
+
+
+def _build_voice_preview_text(voice_name: str) -> str:
+    spoken_name = " ".join(voice_name.split()).strip("., ")
+    if not spoken_name:
+        spoken_name = "your selected voice"
+    return f"Hi, my name is {spoken_name}. Here's what I sound like at your selected speed."
 
 
 @app.post("/api/phase-a/sessions", response_model=StartSessionResponse)
@@ -490,6 +535,7 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
     session = get_phase_b_manager().create_session(
         difficulty=request.difficulty,
         scenario_preference=request.scenario_preference,
+        voice_id=request.voice_id,
         max_turns=request.max_turns,
         minimum_turns=request.minimum_turns,
     )
@@ -510,6 +556,7 @@ async def get_phase_b_session(session_id: str) -> SessionStateResponse:
         scenario=state["scenario"],
         difficulty=state["difficulty"],
         scenario_preference=state.get("scenario_preference"),
+        voice_id=state.get("voice_id"),
         peer_profile=state.get("peer_profile"),
         starter_topic=state.get("starter_topic"),
         opening_line=state.get("opening_line"),
@@ -540,7 +587,10 @@ async def phase_b_websocket(websocket: WebSocket, session_id: str) -> None:
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/next")
-async def phase_b_next_turn(session_id: str) -> dict[str, str]:
+async def phase_b_next_turn(
+    session_id: str,
+    request: NextTurnRequest | None = None,
+) -> dict[str, str]:
     """Generate the next AI prompt and stream it as TTS over the websocket.
 
     This runs the ``prompt_graph`` LangGraph subgraph which calls Gemma via
@@ -558,6 +608,10 @@ async def phase_b_next_turn(session_id: str) -> dict[str, str]:
         raise HTTPException(status_code=409, detail="All turns have been completed.")
     if get_phase_b_manager().has_active_turn(session_id):
         raise HTTPException(status_code=409, detail="Finish the active turn before requesting the next one.")
+
+    if request is not None:
+        get_phase_b_manager().set_voice_id(session_id, request.voice_id)
+        state = get_phase_b_manager().get_state(session_id)
 
     await prompt_graph.ainvoke(
         state,

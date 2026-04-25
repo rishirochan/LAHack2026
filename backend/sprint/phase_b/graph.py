@@ -362,8 +362,13 @@ async def handle_error(state: PhaseBState, config: RunnableConfig) -> dict[str, 
 
 
 async def _stream_tts(config: RunnableConfig, audio_type: str, text: str) -> None:
+    state = get_phase_b_manager().get_state(_session_id(config))
     await _send_event(config, "tts_start", {"audio_type": audio_type, "text": text})
-    async for chunk in stream_tts_chunks(ai_service=get_ai_service(), text=text):
+    async for chunk in stream_tts_chunks(
+        ai_service=get_ai_service(),
+        text=text,
+        voice_id=state.get("voice_id"),
+    ):
         await _send_event(
             config,
             "audio_chunk",
