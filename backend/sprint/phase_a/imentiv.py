@@ -46,6 +46,7 @@ async def analyze_video(settings: AISettings, video_source: str | dict[str, Any]
             "text_emotions": [],
             "transcript": "",
             "transcript_segments": [],
+            "is_mock": True,
             "raw": {},
         }
 

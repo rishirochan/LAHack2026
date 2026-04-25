@@ -38,17 +38,28 @@ async def generate_coach_critique(
 ) -> str:
     """Ask Gemma to critique the merged emotion/transcript analysis."""
 
+    raw_data = merged_analysis.get("raw_data", merged_analysis)
+    derived_metrics = merged_analysis.get("derived_metrics", {})
     prompt = (
-        "You are an expert communication coach. Return exactly 2 specific "
-        "weaknesses and 1 specific strength in under 100 words because this will "
-        "be spoken aloud. Reference timestamps and words from word_correlations "
-        "where possible. Pay special attention to moments where face emotion and "
-        "voice emotion diverge. Focus on how well the user expressed the target "
-        "emotion and what they can do better next time. If one stream is missing, "
-        "only critique streams that have data.\n\n"
+        "You are an expert communication coach. Explain what the measured signals "
+        "mean for the user. Return exactly 2 specific weaknesses and 1 specific "
+        "strength in under 100 words. Return well formatted text with markdown. Use both "
+        "the raw evidence and the derived metrics. Treat overall_match_score, "
+        "target_frame_ratio, average_target_confidence, emotion_stability_score, "
+        "and face_voice_alignment_ratio as the primary indicators. Treat "
+        "peak_match_score as a secondary signal only. You cna also reference the raw data for timestamps and words if needed and more context if needed. If the evidence is mixed, "
+        "say that the performance was mixed instead of framing it as a total miss and mention which emotions they favored over the target emotion. "
+        "For Neutrality (Neutral), interpret success as steady, low-drift delivery "
+        "rather than a perfectly flat or empty expression. Reference timestamps "
+        "and words when the data supports them. Pay special attention to moments "
+        "where face emotion and voice emotion diverge. Focus on how well the user "
+        "expressed the target emotion and what they can do better next time. If "
+        "one stream is missing, only critique streams that have data. Do not "
+        "invent findings that are not supported by the supplied evidence. When referencing things they said use quotes to indicate the exact words they used.\n\n"
         f"Target emotion: {target_emotion}\n"
         f"Previous critiques to avoid repeating: {json.dumps(previous_critiques)}\n"
-        f"Merged analysis JSON: {json.dumps(merged_analysis, ensure_ascii=True)}"
+        f"Raw evidence JSON: {json.dumps(raw_data, ensure_ascii=True)}\n"
+        f"Derived metrics JSON: {json.dumps(derived_metrics, ensure_ascii=True)}"
     )
     return await _generate_text(settings=settings, prompt=prompt)
 
