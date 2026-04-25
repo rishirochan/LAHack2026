@@ -1,10 +1,12 @@
 import unittest
 
+from backend.shared.db import InMemorySessionRepository, reset_session_repository
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 
 
 class PhaseBValidationTests(unittest.TestCase):
     def setUp(self) -> None:
+        reset_session_repository(InMemorySessionRepository())
         self.manager = get_phase_b_manager()
         self.manager._sessions.clear()
         self.session = self.manager.create_session("interview", 5)
@@ -12,6 +14,7 @@ class PhaseBValidationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.manager._sessions.clear()
+        reset_session_repository()
 
     def _add_chunk(self, chunk_index: int, start_ms: int, end_ms: int) -> None:
         self.manager.add_chunk(

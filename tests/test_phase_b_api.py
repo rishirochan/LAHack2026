@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import backend.sprint.api as sprint_api
+from backend.shared.db import InMemorySessionRepository, reset_session_repository
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 
 
@@ -13,6 +14,7 @@ def _file_payload(filename: str, data: bytes, content_type: str) -> tuple[str, b
 
 class PhaseBApiTests(unittest.TestCase):
     def setUp(self) -> None:
+        reset_session_repository(InMemorySessionRepository())
         self.client = TestClient(sprint_api.app)
         self.manager = get_phase_b_manager()
         self.manager._sessions.clear()
@@ -22,6 +24,7 @@ class PhaseBApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.manager._sessions.clear()
         self.client.close()
+        reset_session_repository()
 
     def _chunk_url(self) -> str:
         return f"/api/phase-b/sessions/{self.session.session_id}/turns/0/chunks"

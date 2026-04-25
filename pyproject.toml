@@ -12,6 +12,7 @@ dependencies = [
     "langchain-core",
     "langchain-openai",
     "langgraph",
+    "motor",
     "openai",
     "pydantic-settings",
     "python-multipart",
@@ -19,3 +20,7 @@ dependencies = [
     "uvicorn",
     "grandalf>=0.8",
 ]
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+exclude = ["frontend*", "tests*", "vendor*"]
