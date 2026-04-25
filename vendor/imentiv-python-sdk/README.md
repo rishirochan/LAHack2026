@@ -3,18 +3,17 @@
 [![Python Version](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A comprehensive Python SDK for the [Imentiv AI API](https://imentiv.ai/apis/), providing easy access to video analysis, audio analysis, emotion detection, and face analysis capabilities.
+A comprehensive Python SDK for the [Imentiv AI API](https://imentiv.ai/apis/), providing easy access to emotion detection, video analysis, and face recognition capabilities.
 
 ## Features
 
 - 🎭 **Emotion Detection** - Analyze emotions from images, videos, and text
 - 🎥 **Video Analysis** - Upload and process videos for comprehensive emotion and face analysis
-- 🎧 **Audio Analysis** - Upload audio, poll multimodal analytics, and list uploaded audio files
-- 👤 **Face Detection** - Detect faces and analyze face attributes through image/video analysis
+- 👤 **Face Detection** - Detect faces, analyze attributes, and compare faces
 - 🔒 **Secure** - API key authentication with proper error handling
 - 🚀 **Easy to Use** - Intuitive, well-documented API
 - ⚡ **Robust** - Built-in retry logic and error handling
-- 🔄 **Context Manager Support** - Automatically close client resources after use
+- 🔄 **Async Support** - Context manager support for resource management
 
 ## Installation
 
@@ -42,11 +41,6 @@ client = ImentivClient(api_key="your-api-key-here")
 result = client.video.upload("path/to/video.mp4")
 video_id = result["video_id"]
 analysis = client.video.analyze(video_id)
-
-# Upload and analyze audio
-audio_result = client.audio.upload("path/to/audio.mp3")
-audio_id = audio_result["audio_id"]
-audio_analysis = client.audio.get_results(audio_id, wait=True)
 
 # Detect emotions from an image
 emotions = client.emotion.detect_from_image("path/to/image.jpg")
@@ -122,28 +116,6 @@ with ImentivClient(api_key="your-api-key") as client:
     client.video.delete(video_id)
 ```
 
-### Audio Analysis
-
-```python
-from imentiv import ImentivClient
-
-with ImentivClient(api_key="your-api-key") as client:
-    # Upload an audio file
-    upload_result = client.audio.upload(
-        "pitch_recording.mp3",
-        title="Pitch practice",
-        description="Audio-only communication drill",
-    )
-    audio_id = upload_result["audio_id"]
-    
-    # Get results immediately, or wait until processing finishes
-    results = client.audio.get_results(audio_id, wait=True, poll_interval=2.0)
-    print(f"Status: {results['status']}")
-    
-    # List uploaded audio files
-    audios = client.audio.list(page_size=10, direction="forward")
-```
-
 ### Emotion Detection
 
 ```python
@@ -178,12 +150,15 @@ print(f"Found {len(faces['faces'])} faces")
 attributes = client.face.analyze_face_attributes("portrait.jpg")
 print(f"Age: {attributes['age']}, Gender: {attributes['gender']}")
 
+# Compare two faces
+comparison = client.face.compare_faces("person1.jpg", "person2.jpg")
+print(f"Similarity: {comparison['similarity']}")
+print(f"Match: {comparison['is_match']}")
+
 # Track faces in a video
 tracking = client.face.track_faces_in_video("video123")
 print(f"Unique faces: {tracking['unique_faces']}")
 ```
-
-Note: `compare_faces()` is present as a compatibility stub, but it raises `NotImplementedError` because face comparison is not currently available through the public API endpoints used by this SDK.
 
 ### Error Handling
 
@@ -243,7 +218,6 @@ Main client class for interacting with the Imentiv API.
 
 **Methods:**
 - `video` - Access video analysis endpoints
-- `audio` - Access audio analysis endpoints
 - `emotion` - Access emotion detection endpoints
 - `face` - Access face analysis endpoints
 - `get_account_info()` - Get account information
@@ -260,13 +234,6 @@ Methods for video analysis:
 - `list(page, per_page)` - List all videos
 - `delete(video_id)` - Delete a video
 
-### AudioAPI
-
-Methods for audio analysis:
-- `upload(file_path, title, description)` - Upload an audio file for analysis
-- `get_results(audio_id, wait, poll_interval)` - Get audio multimodal analytics, optionally waiting until processing completes
-- `list(page_size, offset_audio_id, direction)` - List uploaded audio files
-
 ### EmotionAPI
 
 Methods for emotion detection:
@@ -280,7 +247,7 @@ Methods for emotion detection:
 Methods for face analysis:
 - `detect_faces(image_path)` - Detect faces in an image
 - `analyze_face_attributes(image_path)` - Analyze face attributes
-- `compare_faces(image_path1, image_path2)` - Compatibility stub; raises `NotImplementedError`
+- `compare_faces(image_path1, image_path2)` - Compare two faces
 - `track_faces_in_video(video_id, options)` - Track faces in video
 
 ## Exception Hierarchy
@@ -290,7 +257,6 @@ ImentivError (base exception)
 ├── ImentivAPIError
 ├── ImentivAuthenticationError (401)
 ├── ImentivValidationError (400)
-├── ImentivUnprocessableEntityError (422)
 ├── ImentivNotFoundError (404)
 ├── ImentivRateLimitError (429)
 └── ImentivServerError (500+)
@@ -304,7 +270,6 @@ ImentivError (base exception)
 # Clone the repository
 git clone https://github.com/imentiv/imentiv-python-sdk.git
 cd imentiv-python-sdk
-```
 
 #### Using uv (Recommended)
 
@@ -327,6 +292,7 @@ uv pip install -e ".[dev]"
 ```bash
 # Install in development mode
 pip install -e ".[dev]"
+```
 ```
 
 ### Running Tests
@@ -383,7 +349,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - ✅ Core client implementation
 - ✅ Video analysis API support
-- ✅ Audio analysis API support
 - ✅ Emotion detection API support
 - ✅ Face analysis API support
 - ✅ Comprehensive error handling
