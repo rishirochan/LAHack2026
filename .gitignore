@@ -1,6 +1,15 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
 # Python-generated files
 __pycache__/
 *.py[oc]
+*.py[cod]
+*$py.class
 build/
 dist/
 wheels/
@@ -11,20 +20,21 @@ wheels/
 .hypothesis/
 .coverage
 coverage/
+htmlcov/
 
 # Virtual environments
 .venv
+.venv/
 venv/
 env/
-
-# Environment files
-.env
-.env.*
-!.env.example
 
 # Frontend build output
 node_modules/
 .next/
+.turbo
+out/
+next-env.d.ts
+*.tsbuildinfo
 
 # Editor / IDE files
 .idea/
@@ -32,8 +42,15 @@ node_modules/
 *.swp
 *.swo
 
+# Package-manager and debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
 # OS / local runtime files
 .DS_Store
+Thumbs.db
 *.log
 *.tmp
 *.temp
