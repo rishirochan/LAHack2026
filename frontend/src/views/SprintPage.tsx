@@ -21,7 +21,7 @@ const processingStages = [
 ];
 
 const defaultSetup: SessionSetup = {
-  targetEmotion: 'Happiness',
+  targetEmotion: null,
 };
 
 export default function SprintPage() {
@@ -52,6 +52,11 @@ export default function SprintPage() {
   } = usePhaseASession();
 
   async function handleStart() {
+    if (!setup.targetEmotion) {
+      setLocalError('Choose an emotion before generating a prompt.');
+      return;
+    }
+
     setLocalError('');
     try {
       await startSession(setup);
@@ -61,6 +66,11 @@ export default function SprintPage() {
   }
 
   async function handleRegenerate() {
+    if (!setup.targetEmotion) {
+      setLocalError('Choose an emotion before generating a prompt.');
+      return;
+    }
+
     setLocalError('');
     try {
       await startSession(setup);
@@ -205,10 +215,13 @@ export default function SprintPage() {
 
           <button
             onClick={handleStart}
-            className="rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
+            disabled={!setup.targetEmotion}
+            className="rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
           >
             Generate prompt →
           </button>
+
+          {shownError && <p className="mt-4 text-sm text-red-600">{shownError}</p>}
         </div>
       </div>
     );

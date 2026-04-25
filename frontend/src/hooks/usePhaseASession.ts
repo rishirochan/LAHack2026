@@ -26,7 +26,7 @@ export type SessionStatus =
   | 'error';
 
 export type SessionSetup = {
-  targetEmotion: TargetEmotion;
+  targetEmotion: TargetEmotion | null;
 };
 
 export type DisplayMetric = {

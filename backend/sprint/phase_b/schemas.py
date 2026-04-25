@@ -13,30 +13,67 @@ Scenario = Literal[
     "interview",
     "negotiation",
     "casual",
-    "public_speaking",
+    "networking",
+    "roommate",
 ]
-
-Persona = Literal[
-    "interviewer",
-    "negotiator",
-    "friend",
-    "audience",
-]
-
-SCENARIO_TO_PERSONA: dict[str, Persona] = {
-    "interview": "interviewer",
-    "negotiation": "negotiator",
-    "casual": "friend",
-    "public_speaking": "audience",
-}
 
 ChunkStatus = Literal["pending", "processing", "done", "failed", "timed_out"]
+TurnAnalysisStatus = Literal["pending", "partial", "ready"]
 
 SessionStatus = Literal[
     "active",
     "complete",
     "error",
 ]
+
+
+class PeerProfile(TypedDict):
+    """Generated profile for the simulated conversation partner."""
+
+    name: str
+    role: str
+    vibe: str
+    energy: str
+    conversation_goal: str
+    scenario: str
+
+
+class MomentumDecision(TypedDict):
+    """Decision returned after the minimum turn count is met."""
+
+    continue_conversation: bool
+    reason: str
+
+
+class TurnAnalysis(TypedDict):
+    """Per-turn analysis using local conversational context."""
+
+    analysis_status: TurnAnalysisStatus
+    summary: str
+    momentum_score: int
+    content_quality_score: int
+    emotional_delivery_score: int
+    energy_match_score: int
+    authenticity_score: int
+    follow_up_invitation_score: int
+    strengths: list[str]
+    growth_edges: list[str]
+
+
+class FinalReport(TypedDict):
+    """Full-session report built from transcripts and Imentiv outputs."""
+
+    summary: str
+    natural_ending_reason: str
+    conversation_momentum_score: int
+    content_quality_score: int
+    emotional_delivery_score: int
+    energy_match_score: int
+    authenticity_score: int
+    follow_up_invitation_score: int
+    strengths: list[str]
+    growth_edges: list[str]
+    next_focus: str
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +108,8 @@ class TurnState(TypedDict):
     transcript_words: list[dict[str, Any]] | None
     transcript_audio_upload: dict[str, Any] | None
     merged_summary: dict[str, Any] | None
+    turn_analysis: TurnAnalysis | None
+    analysis_status: TurnAnalysisStatus
     critique: str | None
 
 
@@ -78,33 +117,49 @@ class PhaseBState(TypedDict):
     """Full session state carried through LangGraph and the session store."""
 
     session_id: str
-    scenario: Scenario
-    persona: Persona
+    scenario: str | None
+    scenario_preference: Scenario | None
+    voice_id: str | None
+    peer_profile: PeerProfile | None
+    starter_topic: str | None
+    opening_line: str | None
     turn_index: int
     max_turns: int
+    minimum_turns: int
     conversation_history: list[dict[str, str]]
     current_turn: TurnState | None
     turns: list[TurnState]
+    momentum_decision: MomentumDecision | None
+    final_report: FinalReport | None
     status: SessionStatus
     error: NotRequired[str | None]
 
 
 def build_initial_state(
     session_id: str,
-    scenario: Scenario,
-    max_turns: int = 4,
+    scenario_preference: Scenario | None = None,
+    max_turns: int = 6,
+    minimum_turns: int = 3,
+    voice_id: str | None = None,
 ) -> PhaseBState:
     """Create the default state for a new Phase B session."""
 
     return {
         "session_id": session_id,
-        "scenario": scenario,
-        "persona": SCENARIO_TO_PERSONA[scenario],
+        "scenario": None,
+        "scenario_preference": scenario_preference,
+        "voice_id": voice_id,
+        "peer_profile": None,
+        "starter_topic": None,
+        "opening_line": None,
         "turn_index": 0,
         "max_turns": max_turns,
+        "minimum_turns": minimum_turns,
         "conversation_history": [],
         "current_turn": None,
         "turns": [],
+        "momentum_decision": None,
+        "final_report": None,
         "status": "active",
     }
 
@@ -122,6 +177,8 @@ def build_turn_state(turn_index: int, prompt_text: str) -> TurnState:
         "transcript_words": None,
         "transcript_audio_upload": None,
         "merged_summary": None,
+        "turn_analysis": None,
+        "analysis_status": "pending",
         "critique": None,
     }
 
@@ -133,8 +190,16 @@ def build_turn_state(turn_index: int, prompt_text: str) -> TurnState:
 class StartConversationRequest(BaseModel):
     """Body for POST /api/phase-b/sessions."""
 
-    scenario: Scenario
-    max_turns: int = Field(default=4, ge=2, le=5)
+    scenario_preference: Scenario | None = None
+    voice_id: str | None = None
+    max_turns: int = Field(default=6, ge=3, le=8)
+    minimum_turns: int = Field(default=3, ge=3, le=5)
+
+
+class NextTurnRequest(BaseModel):
+    """Optional per-turn overrides for the next peer reply."""
+
+    voice_id: str | None = None
 
 
 class StartConversationResponse(BaseModel):
@@ -148,13 +213,20 @@ class SessionStateResponse(BaseModel):
     """Full session state returned by GET /api/phase-b/sessions/{id}."""
 
     session_id: str
-    scenario: Scenario
-    persona: Persona
+    scenario: str | None
+    scenario_preference: Scenario | None
+    voice_id: str | None
+    peer_profile: dict[str, Any] | None
+    starter_topic: str | None
+    opening_line: str | None
     turn_index: int
     max_turns: int
+    minimum_turns: int
     conversation_history: list[dict[str, str]]
     current_turn: dict[str, Any] | None
     turns: list[dict[str, Any]]
+    momentum_decision: dict[str, Any] | None
+    final_report: dict[str, Any] | None
     status: SessionStatus
 
 
