@@ -100,6 +100,7 @@ async def collect_chunks(state: PhaseBState, config: RunnableConfig) -> dict[str
     for chunk in current_turn["chunks"]:
         if chunk["status"] in ("pending", "processing"):
             chunk["status"] = "timed_out"
+    manager.persist_state(session_id)
 
     return {"error": None}
 
@@ -201,6 +202,7 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
     }
 
     current_turn["merged_summary"] = merged
+    manager.persist_state(session_id)
     return {"error": None}
 
 
@@ -236,6 +238,7 @@ async def judge_response(state: PhaseBState, config: RunnableConfig) -> dict[str
         )
 
         current_turn["critique"] = critique
+        manager.persist_state(session_id)
         await _send_event(config, "critique_generated", {"critique": critique})
         return {"error": None}
     except Exception as error:

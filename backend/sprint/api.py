@@ -2,11 +2,14 @@
 
 import asyncio
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.shared.db import close_database, get_session_repository, init_database
+from backend.shared.db.repository import DEFAULT_USER_ID
 from backend.sprint.phase_a.graph import build_initial_state, phase_a_graph
 from backend.sprint.phase_a.schemas import (
     ContinueSessionRequest,
@@ -26,7 +29,16 @@ from backend.sprint.phase_b.graph import critique_graph, end_graph, prompt_graph
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 
 
-app = FastAPI(title="LAHacks 2026 Backend")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await init_database()
+    try:
+        yield
+    finally:
+        await close_database()
+
+
+app = FastAPI(title="LAHacks 2026 Backend", lifespan=lifespan)
 
 PHASE_B_MIN_SECONDS = 2
 PHASE_B_MAX_SECONDS = 45
@@ -41,6 +53,75 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/sessions/recent")
+async def list_recent_sessions(
+    user_id: str = Query(default=DEFAULT_USER_ID),
+    limit: int = Query(default=10, ge=1, le=50),
+) -> dict[str, object]:
+    """Return recent persisted practice sessions for dashboard history."""
+
+    sessions = await get_session_repository().list_recent_sessions(
+        user_id=user_id,
+        limit=limit,
+    )
+    return {"sessions": [_to_session_preview(session) for session in sessions]}
+
+
+@app.get("/api/users/{user_id}/trends")
+async def get_user_trends(user_id: str) -> dict[str, object]:
+    """Return analytics trends calculated across a user's persisted sessions."""
+
+    return await get_session_repository().get_user_trends(user_id=user_id)
+
+
+@app.get("/api/sessions/{session_id}/chunks")
+async def list_session_chunks(session_id: str) -> dict[str, object]:
+    """Return normalized chunk analytics for one persisted session."""
+
+    chunks = await get_session_repository().list_session_chunks(session_id)
+    return {"session_id": session_id, "chunks": chunks}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_persisted_session(session_id: str) -> dict[str, object]:
+    """Return one persisted session document."""
+
+    session = await get_session_repository().get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    return session
+
+
+def _to_session_preview(session: dict) -> dict[str, object]:
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
+    setup = session.get("setup") if isinstance(session.get("setup"), dict) else {}
+    mode = str(session.get("mode") or "")
+    label = "Practice Session"
+    score = None
+
+    if mode == "phase_a":
+        label = str(setup.get("theme") or "Emotion Drill")
+        scores = summary.get("match_scores") if isinstance(summary, dict) else None
+        if isinstance(scores, list) and scores:
+            score = round(float(sum(scores) / len(scores)) * 100)
+    elif mode == "phase_b":
+        label = str(setup.get("scenario") or "Conversation").replace("_", " ").title()
+
+    return {
+        "session_id": session.get("session_id"),
+        "mode": session.get("mode"),
+        "mode_label": session.get("mode_label"),
+        "label": label,
+        "status": session.get("status"),
+        "created_at": session.get("created_at"),
+        "updated_at": session.get("updated_at"),
+        "completed_at": session.get("completed_at"),
+        "score": score,
+        "total_turns": summary.get("total_turns") if isinstance(summary, dict) else None,
+        "round_count": len(summary.get("rounds", [])) if isinstance(summary.get("rounds"), list) else None,
+    }
 
 
 @app.post("/api/phase-a/sessions", response_model=StartSessionResponse)

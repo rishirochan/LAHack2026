@@ -1,14 +1,23 @@
+"use client";
+
 import { Mic, MessageSquare, AudioLines, ArrowRight, Calendar } from "lucide-react";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
-const recentSessions: {
-  id: number;
-  type: string;
-  mode: "Emotion Drills" | "Conversations" | "Free Speaking";
-  date: string;
-  duration: string;
-  score: number;
-}[] = [];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+type RecentSession = {
+  session_id: string;
+  label: string;
+  mode_label: "Emotion Drills" | "Conversations" | "Free Speaking";
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  completed_at?: string;
+  score?: number | null;
+  total_turns?: number | null;
+  round_count?: number | null;
+};
 
 const modeIcon = {
   "Emotion Drills": Mic,
@@ -17,6 +26,39 @@ const modeIcon = {
 };
 
 export default function DashboardHome() {
+  const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
+  const [isLoadingRecent, setIsLoadingRecent] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadRecentSessions() {
+      try {
+        const response = await fetch(`${API_URL}/api/sessions/recent?limit=10`);
+        if (!response.ok) {
+          throw new Error("Could not load recent sessions.");
+        }
+        const data = (await response.json()) as { sessions: RecentSession[] };
+        if (isMounted) {
+          setRecentSessions(data.sessions);
+        }
+      } catch {
+        if (isMounted) {
+          setRecentSessions([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingRecent(false);
+        }
+      }
+    }
+
+    void loadRecentSessions();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   return (
     <div>
       {/* Hero greeting */}
@@ -98,10 +140,17 @@ export default function DashboardHome() {
           <span className="flex items-center gap-1">
             <Calendar className="w-3 h-3" /> Date
           </span>
-          <span>Duration</span>
+          <span>Result</span>
         </div>
 
-        {recentSessions.length === 0 ? (
+        {isLoadingRecent ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-12 h-12 rounded-xl bg-cream-100 flex items-center justify-center mb-3">
+              <Mic className="w-5 h-5 text-foreground/20" />
+            </div>
+            <p className="text-sm font-medium text-foreground/40">Loading sessions...</p>
+          </div>
+        ) : recentSessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-12 h-12 rounded-xl bg-cream-100 flex items-center justify-center mb-3">
               <Mic className="w-5 h-5 text-foreground/20" />
@@ -113,10 +162,10 @@ export default function DashboardHome() {
           </div>
         ) : (
           recentSessions.map((session, i) => {
-            const Icon = modeIcon[session.mode];
+            const Icon = modeIcon[session.mode_label] ?? Mic;
             return (
               <div
-                key={session.id}
+                key={session.session_id}
                 className={`grid grid-cols-4 px-6 py-4 items-center hover:bg-cream-50 transition-colors ${
                   i !== recentSessions.length - 1 ? "border-b border-cream-100" : ""
                 }`}
@@ -125,11 +174,11 @@ export default function DashboardHome() {
                   <div className="w-7 h-7 rounded-lg bg-blue-600/10 flex items-center justify-center">
                     <Icon className="w-3.5 h-3.5 text-blue-600" />
                   </div>
-                  <span className="text-sm font-medium text-foreground">{session.mode}</span>
+                  <span className="text-sm font-medium text-foreground">{session.mode_label}</span>
                 </div>
-                <span className="text-sm text-foreground/60">{session.type}</span>
-                <span className="text-sm text-foreground/50">{session.date}</span>
-                <span className="text-sm text-foreground/50">{session.duration}</span>
+                <span className="text-sm text-foreground/60">{session.label}</span>
+                <span className="text-sm text-foreground/50">{formatSessionDate(session.completed_at ?? session.updated_at ?? session.created_at)}</span>
+                <span className="text-sm text-foreground/50">{formatSessionStatus(session)}</span>
               </div>
             );
           })
@@ -137,4 +186,30 @@ export default function DashboardHome() {
       </div>
     </div>
   );
+}
+
+function formatSessionDate(value?: string) {
+  if (!value) {
+    return "Just now";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatSessionStatus(session: RecentSession) {
+  if (session.score !== null && session.score !== undefined) {
+    return `${session.score}% avg`;
+  }
+  if (session.total_turns) {
+    return `${session.total_turns} turns`;
+  }
+  if (session.round_count) {
+    return `${session.round_count} rounds`;
+  }
+  return session.status === "complete" ? "Complete" : "In progress";
 }

@@ -23,6 +23,9 @@ Copy `.env.example` to `.env`, then fill in real values:
 - `ELEVENLABS_TTS_MODEL` (default `eleven_multilingual_v2` is prefilled)
 - `IMENTIV_API_KEY`
 - `IMENTIV_BASE_URL` (defaults to `https://api.imentiv.ai/v2`)
+- `MONGODB_ENABLED` (set `true` when using MongoDB Atlas persistence)
+- `MONGODB_URI` (your MongoDB Atlas connection string; keep this in local `.env`)
+- `MONGODB_DB_NAME` (defaults to `voxcoach`)
 - `NEXT_PUBLIC_API_URL` (frontend backend HTTP URL)
 - `NEXT_PUBLIC_WS_URL` (frontend backend websocket URL)
 
@@ -42,3 +45,7 @@ Use these shared entrypoints anywhere in backend code:
 - ElevenLabs client (TTS/STT ready)
 
 Phase A Emotion Drills uses Google AI/Gemma for both scenario generation and critique generation, ElevenLabs for speech-to-text and TTS playback, and Imentiv for video/audio emotion analysis.
+
+### 4) MongoDB Persistence
+
+MongoDB stores durable practice-session history for the dashboard while live websocket coordination remains in memory. Create a MongoDB Atlas database user with read/write access, allow your current IP in Network Access, then paste your Atlas URI into `.env` as `MONGODB_URI`.

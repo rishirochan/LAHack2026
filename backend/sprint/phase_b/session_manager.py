@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 
+from backend.shared.db import get_session_repository
+from backend.shared.db.tasks import schedule_repository_write
 from backend.sprint.phase_b.schemas import (
     ChunkRecord,
     PhaseBState,
@@ -46,6 +48,12 @@ class PhaseBSessionManager:
         state = build_initial_state(session_id, scenario, difficulty, max_turns)
         session = ActiveConversation(session_id=session_id, state=state)
         self._sessions[session_id] = session
+        schedule_repository_write(
+            get_session_repository().create_phase_b_session(
+                session_id=session_id,
+                state=dict(state),
+            )
+        )
         return session
 
     def get_session(self, session_id: str) -> ActiveConversation:
@@ -68,6 +76,7 @@ class PhaseBSessionManager:
         turn = build_turn_state(state["turn_index"], prompt_text)
         state["current_turn"] = turn
         state["conversation_history"].append({"role": "assistant", "content": prompt_text})
+        self.persist_state(session_id)
         return turn
 
     def add_chunk(self, session_id: str, chunk: ChunkRecord) -> None:
@@ -78,6 +87,7 @@ class PhaseBSessionManager:
         if current is None:
             raise RuntimeError("No active turn to attach a chunk to.")
         current["chunks"].append(chunk)
+        self.persist_state(session_id)
 
     def has_chunk(self, session_id: str, chunk_index: int) -> bool:
         """Return whether the current turn already contains the chunk index."""
@@ -105,6 +115,7 @@ class PhaseBSessionManager:
 
         chunk = self.get_chunk(session_id, chunk_index)
         chunk.update(updates)  # type: ignore[typeddict-item]
+        self.persist_state(session_id)
 
     def get_sorted_chunks(self, session_id: str) -> list[ChunkRecord]:
         """Return current-turn chunks ordered by start timestamp."""
@@ -124,6 +135,7 @@ class PhaseBSessionManager:
             raise RuntimeError("No active turn.")
         current["recording_start_ms"] = start_ms
         current["recording_end_ms"] = end_ms
+        self.persist_state(session_id)
 
     def validate_turn_chunks(
         self,
@@ -204,6 +216,7 @@ class PhaseBSessionManager:
             raise RuntimeError("No active turn.")
         current["transcript"] = transcript
         current["transcript_words"] = words
+        self.persist_state(session_id)
 
     def finish_turn(self, session_id: str, critique: str, merged_summary: dict[str, Any]) -> None:
         """Archive the current turn and advance the index."""
@@ -219,13 +232,26 @@ class PhaseBSessionManager:
         state["turns"].append(current)
         state["current_turn"] = None
         state["turn_index"] += 1
+        self.persist_state(session_id)
 
     def end_session(self, session_id: str) -> PhaseBState:
         """Mark the session as complete and return final state."""
 
         state = self.get_state(session_id)
         state["status"] = "complete"
+        self.persist_state(session_id)
         return state
+
+    def persist_state(self, session_id: str) -> None:
+        """Persist the serializable Phase B state in the background."""
+
+        state = self.get_state(session_id)
+        schedule_repository_write(
+            get_session_repository().update_phase_b_state(
+                session_id=session_id,
+                state=dict(state),
+            )
+        )
 
     # ------------------------------------------------------------------
     # WebSocket binding  (mirrors Phase A pattern)
