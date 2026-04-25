@@ -200,26 +200,6 @@ export default function LandingPage() {
           )}
         </motion.div>
 
-        {/* Hero Image */}
-        <motion.div
-          initial={{ opacity: 0, rotateX: -45, y: 60 }}
-          animate={{ opacity: 1, rotateX: 0, y: 0 }}
-          transition={{ duration: 1.4, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          style={{ perspective: 1000 }}
-          className="w-full max-w-2xl"
-        >
-          <motion.div
-            whileHover={{ rotateY: 5, rotateX: -5 }}
-            transition={{ type: 'spring', stiffness: 100 }}
-            style={{ transformStyle: 'preserve-3d' }}
-          >
-            <img
-              src="/hero-card.jpg"
-              alt="Eloquence Score Card"
-              className="w-full rounded-2xl shadow-2xl"
-            />
-          </motion.div>
-        </motion.div>
       </section>
 
       {/* Features Section */}

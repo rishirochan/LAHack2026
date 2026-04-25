@@ -1,113 +1,191 @@
-"""System prompt templates for Phase B conversation personas and judge mode."""
-
-from backend.sprint.phase_b.schemas import Persona, Scenario
+"""Prompt templates for Phase B's conversation-native workflow."""
 
 
-# ---------------------------------------------------------------------------
-# Persona descriptions — used in generate_prompt
-# ---------------------------------------------------------------------------
-
-PERSONA_DESCRIPTIONS: dict[Persona, str] = {
-    "interviewer": (
-        "You are a senior hiring manager conducting a technical interview. "
-        "You are professional and direct."
-    ),
-    "negotiator": (
-        "You are a seasoned HR director handling a salary negotiation. "
-        "You are measured and calculating, testing the candidate's resolve."
-    ),
-    "friend": (
-        "You are a close friend having a casual coffee chat. "
-        "You are warm and conversational but genuinely curious."
-    ),
-    "audience": (
-        "You are representing a live audience during a public speaking session. "
-        "You are neutral and attentive, occasionally asking pointed questions."
-    ),
+SETUP_SYSTEM_PROMPT = """\
+You are creating the setup for a social conversation simulator.
+Generate one realistic peer persona and one starter topic for the user.
+Return strict JSON with this exact shape:
+{
+  "scenario": "interview | negotiation | casual | networking | roommate",
+  "peer_profile": {
+    "name": "string",
+    "role": "string",
+    "vibe": "string",
+    "energy": "low | medium | high",
+    "conversation_goal": "string",
+    "scenario": "string"
+  },
+  "starter_topic": "string",
+  "opening_line": "string"
 }
 
-# ---------------------------------------------------------------------------
-# Difficulty scaling
-# ---------------------------------------------------------------------------
-
-DIFFICULTY_MODIFIERS: dict[int, str] = {
-    1: "You are friendly and encouraging, accept most answers warmly.",
-    2: "You are supportive with gentle follow-ups.",
-    3: "You are conversational and mildly probing.",
-    4: "You ask reasonable follow-ups when answers are vague.",
-    5: "You are balanced — professional but fair.",
-    6: "You push back on weak answers with pointed questions.",
-    7: "You probe weak answers with follow-up pressure, you do not accept vague responses.",
-    8: "You are demanding and expect precise, substantive answers.",
-    9: "You are aggressive and challenge every claim with counter-arguments.",
-    10: "You are a hardball interrogator who dismantles weak reasoning immediately.",
-}
+Rules:
+- The peer should feel like one specific person, not a generic role.
+- The opening line should sound natural out loud and invite a response.
+- Keep the opening line under 35 words.
+- Do not include markdown fences or extra commentary.
+"""
 
 
-def _get_difficulty_modifier(difficulty: int) -> str:
-    clamped = max(1, min(10, difficulty))
-    return DIFFICULTY_MODIFIERS.get(clamped, DIFFICULTY_MODIFIERS[5])
-
-
-# ---------------------------------------------------------------------------
-# Prompt generation system prompt
-# ---------------------------------------------------------------------------
-
-def build_prompt_system(scenario: Scenario, persona: Persona, difficulty: int) -> str:
-    """Build the system prompt for the generate_prompt node."""
-
+def build_setup_user(*, difficulty: int, scenario_preference: str | None) -> str:
+    preference = scenario_preference or "no explicit preference"
     return (
-        f"{PERSONA_DESCRIPTIONS[persona]} "
-        f"Difficulty level {difficulty} of 10: {_get_difficulty_modifier(difficulty)} "
-        f"Ask one focused question per turn. Keep your question under 3 sentences. "
-        f"Do not include any meta-commentary or stage directions."
+        f"Generate a Phase B conversation setup.\n"
+        f"Difficulty: {difficulty}/10.\n"
+        f"Scenario preference: {preference}.\n"
+        "Make the situation socially realistic and worth at least three back-and-forth turns."
     )
 
 
-def build_prompt_user(
+PEER_REPLY_SYSTEM_PROMPT = """\
+You are roleplaying one peer in a spoken social conversation simulator.
+Stay fully in character. Respond as the peer, not as a coach.
+Speak naturally in 1 to 3 sentences, with a little personality.
+Your reply should build on what the user just said and leave room for another answer.
+Do not mention scoring, analysis, or that this is a simulation.
+"""
+
+
+def build_peer_reply_user(
+    *,
+    peer_profile: dict[str, str],
+    starter_topic: str | None,
     conversation_history: list[dict[str, str]],
-    turn_index: int,
+    difficulty: int,
 ) -> str:
-    """Build the user message for the generate_prompt node."""
-
-    if turn_index == 0:
-        return "Generate your opening question to start the conversation."
-
-    formatted = "\n".join(
-        f"{'AI' if msg['role'] == 'assistant' else 'User'}: {msg['content']}"
-        for msg in conversation_history
+    history = "\n".join(
+        f"{'Peer' if item['role'] == 'assistant' else 'User'}: {item['content']}"
+        for item in conversation_history
     )
     return (
-        f"Conversation so far:\n{formatted}\n\n"
-        f"Generate the next question. Build on what the user just said."
+        "Peer profile:\n"
+        f"- name: {peer_profile.get('name', '')}\n"
+        f"- role: {peer_profile.get('role', '')}\n"
+        f"- vibe: {peer_profile.get('vibe', '')}\n"
+        f"- energy: {peer_profile.get('energy', '')}\n"
+        f"- goal: {peer_profile.get('conversation_goal', '')}\n"
+        f"- scenario: {peer_profile.get('scenario', '')}\n\n"
+        f"Starter topic: {starter_topic or ''}\n"
+        f"Difficulty: {difficulty}/10\n\n"
+        f"Conversation so far:\n{history}\n\n"
+        "Reply as the peer with the next spoken line."
     )
 
 
-# ---------------------------------------------------------------------------
-# Judge mode system prompt
-# ---------------------------------------------------------------------------
+TURN_ANALYSIS_SYSTEM_PROMPT = """\
+You are evaluating one turn in a conversation practice simulator.
+Use the peer's previous line, the user's response transcript, and any available Imentiv data.
+Return strict JSON with this exact shape:
+{
+  "analysis_status": "pending | partial | ready",
+  "summary": "string",
+  "momentum_score": 0,
+  "content_quality_score": 0,
+  "emotional_delivery_score": 0,
+  "energy_match_score": 0,
+  "authenticity_score": 0,
+  "follow_up_invitation_score": 0,
+  "strengths": ["string", "string"],
+  "growth_edges": ["string", "string"]
+}
 
-JUDGE_SYSTEM_PROMPT = """\
-You are an expert communication coach reviewing a candidate's response.
-You have multimodal data from their response including facial emotion analysis,
-voice emotion analysis, eye contact metrics, and a word-level transcript.
-All timestamps are in seconds relative to when they started speaking.
-
-Provide feedback in exactly this format:
-WEAKNESS 1: [timestamp if applicable] [specific observation tied to the data]
-WEAKNESS 2: [timestamp if applicable] [specific observation tied to the data]
-STRENGTH 1: [timestamp if applicable] [specific observation tied to the data]
-
-Reference specific timestamps and specific emotions when the data supports it.
-Example of good output: "At 10.8s when you said 'weakness', both your face (nervousness 0.68) \
-and voice (nervousness 0.61) spiked simultaneously — this specific word is a stress trigger."
-Example of bad output: "You seemed nervous throughout your response."
-Do not give generic feedback. Every point must reference something in the data.
-If chunks were marked as timed-out or failed, do not fabricate data for those windows.
-Keep the total response under 120 words because it will be spoken aloud."""
+Scoring must be 0-100 integers.
+If Imentiv data is partial or missing, reflect that in analysis_status and avoid overclaiming.
+Keep summary under 50 words. Do not include markdown fences or extra commentary.
+"""
 
 
-def build_judge_user(merged_summary_json: str) -> str:
-    """Build the user message for the judge_response node."""
+def build_turn_analysis_user(
+    *,
+    peer_message: str,
+    user_transcript: str,
+    merged_summary_json: str,
+) -> str:
+    return (
+        f"Peer line:\n{peer_message}\n\n"
+        f"User response transcript:\n{user_transcript}\n\n"
+        f"Imentiv and chunk summary:\n{merged_summary_json}"
+    )
 
-    return f"Merged response data:\n{merged_summary_json}"
+
+MOMENTUM_SYSTEM_PROMPT = """\
+You are deciding whether a social conversation should continue naturally.
+Return strict JSON with this exact shape:
+{
+  "continue_conversation": true,
+  "reason": "string"
+}
+
+The conversation must continue through at least 3 back-and-forth turns unless the user is completely non-responsive.
+After that, continue when there is genuine momentum, curiosity, or unfinished business.
+End when the exchange feels naturally complete, awkwardly stalled, or repetitive.
+Do not include markdown fences or extra commentary.
+"""
+
+
+def build_momentum_user(
+    *,
+    peer_profile: dict[str, str] | None,
+    starter_topic: str | None,
+    conversation_history: list[dict[str, str]],
+    latest_turn_analysis: dict[str, object] | None,
+    minimum_turns: int,
+) -> str:
+    history = "\n".join(
+        f"{'Peer' if item['role'] == 'assistant' else 'User'}: {item['content']}"
+        for item in conversation_history
+    )
+    return (
+        f"Minimum turns before ending: {minimum_turns}\n"
+        f"Starter topic: {starter_topic or ''}\n"
+        f"Peer profile: {peer_profile or {}}\n"
+        f"Latest turn analysis: {latest_turn_analysis or {}}\n\n"
+        f"Conversation so far:\n{history}"
+    )
+
+
+FINAL_REPORT_SYSTEM_PROMPT = """\
+You are generating the final coaching report for a spoken social conversation simulator.
+Use the full transcript history and all available Imentiv-derived analysis.
+Return strict JSON with this exact shape:
+{
+  "summary": "string",
+  "natural_ending_reason": "string",
+  "conversation_momentum_score": 0,
+  "content_quality_score": 0,
+  "emotional_delivery_score": 0,
+  "energy_match_score": 0,
+  "authenticity_score": 0,
+  "follow_up_invitation_score": 0,
+  "strengths": ["string", "string", "string"],
+  "growth_edges": ["string", "string", "string"],
+  "next_focus": "string"
+}
+
+Scores must be 0-100 integers.
+Keep the summary under 70 words. The tone should be balanced and specific, not harsh.
+Do not include markdown fences or extra commentary.
+"""
+
+
+def build_final_report_user(
+    *,
+    peer_profile: dict[str, str] | None,
+    starter_topic: str | None,
+    conversation_history: list[dict[str, str]],
+    turn_analyses: list[dict[str, object]],
+    aggregated_metrics_json: str,
+    natural_ending_reason: str,
+) -> str:
+    history = "\n".join(
+        f"{'Peer' if item['role'] == 'assistant' else 'User'}: {item['content']}"
+        for item in conversation_history
+    )
+    return (
+        f"Peer profile: {peer_profile or {}}\n"
+        f"Starter topic: {starter_topic or ''}\n"
+        f"Natural ending reason: {natural_ending_reason}\n"
+        f"Turn analyses: {turn_analyses}\n"
+        f"Aggregated metrics: {aggregated_metrics_json}\n\n"
+        f"Full conversation:\n{history}"
+    )
