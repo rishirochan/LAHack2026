@@ -83,10 +83,15 @@ type WebsocketEvent = {
   payload: Record<string, unknown>;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001';
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000';
 
-export function usePhaseBConversation() {
+export function usePhaseBConversation(options?: {
+  voiceId?: string | null;
+  speechRate?: number;
+}) {
+  const voiceId = options?.voiceId ?? null;
+  const speechRate = options?.speechRate ?? 1;
   const [status, setStatus] = useState<ConversationStatus>('setup');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -112,6 +117,7 @@ export function usePhaseBConversation() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         difficulty,
+        voice_id: voiceId,
       }),
     });
 
@@ -135,6 +141,8 @@ export function usePhaseBConversation() {
     setProcessingStage('');
     const response = await fetch(`${API_URL}/api/phase-b/sessions/${activeSessionId}/turns/next`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice_id: voiceId }),
     });
 
     if (!response.ok) {
@@ -365,6 +373,7 @@ export function usePhaseBConversation() {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audioElementRef.current = audio;
+    audio.playbackRate = clampSpeechRate(speechRate);
     audio.onended = () => {
       URL.revokeObjectURL(url);
       if (audioElementRef.current === audio) {
@@ -559,4 +568,11 @@ function base64ChunksToBlob(chunks: string[], mimeType: string) {
 
 function getAudioFilename(audioBlob: Blob) {
   return audioBlob.type === 'audio/wav' ? 'phase-b-audio.wav' : 'phase-b-audio.webm';
+}
+
+function clampSpeechRate(value: number) {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.max(0.5, Math.min(1.5, value));
 }

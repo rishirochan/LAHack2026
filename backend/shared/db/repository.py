@@ -159,6 +159,7 @@ class InMemorySessionRepository:
                 "setup": {
                     "scenario": state.get("scenario"),
                     "scenario_preference": state.get("scenario_preference"),
+                    "voice_id": state.get("voice_id"),
                     "difficulty": state.get("difficulty"),
                     "max_turns": state.get("max_turns"),
                     "minimum_turns": state.get("minimum_turns"),
@@ -198,6 +199,7 @@ class InMemorySessionRepository:
                     "setup": {
                         "scenario": state.get("scenario"),
                         "scenario_preference": state.get("scenario_preference"),
+                        "voice_id": state.get("voice_id"),
                         "difficulty": state.get("difficulty"),
                         "max_turns": state.get("max_turns"),
                         "minimum_turns": state.get("minimum_turns"),
@@ -379,6 +381,7 @@ class MongoSessionRepository:
                     "setup": {
                         "scenario": state.get("scenario"),
                         "scenario_preference": state.get("scenario_preference"),
+                        "voice_id": state.get("voice_id"),
                         "difficulty": state.get("difficulty"),
                         "max_turns": state.get("max_turns"),
                         "minimum_turns": state.get("minimum_turns"),
@@ -409,6 +412,7 @@ class MongoSessionRepository:
                 "setup": {
                     "scenario": state.get("scenario"),
                     "scenario_preference": state.get("scenario_preference"),
+                    "voice_id": state.get("voice_id"),
                     "difficulty": state.get("difficulty"),
                     "max_turns": state.get("max_turns"),
                     "minimum_turns": state.get("minimum_turns"),
@@ -596,6 +600,7 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
         "session_id": state.get("session_id"),
         "scenario": state.get("scenario"),
         "scenario_preference": state.get("scenario_preference"),
+        "voice_id": state.get("voice_id"),
         "difficulty": state.get("difficulty"),
         "status": state.get("status"),
         "starter_topic": state.get("starter_topic"),

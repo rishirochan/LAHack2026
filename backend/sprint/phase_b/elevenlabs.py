@@ -27,6 +27,19 @@ async def stream_tts_chunks(
         yield base64.b64encode(chunk).decode("ascii")
 
 
+async def synthesize_tts_audio(
+    *,
+    ai_service: AIServiceFacade,
+    text: str,
+    voice_id: str | None = None,
+) -> bytes:
+    """Return one MP3 payload for preview playback."""
+
+    effective_voice = voice_id or ai_service.settings.elevenlabs_default_voice_id
+    chunks = await asyncio.to_thread(_collect_tts_chunks, ai_service, text, effective_voice)
+    return b"".join(chunks)
+
+
 async def transcribe_audio(
     *,
     ai_service: AIServiceFacade,
