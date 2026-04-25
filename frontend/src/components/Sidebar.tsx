@@ -16,11 +16,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 const navItems = [
   { icon: Home, label: 'Home', path: '/home' },
   { icon: PlayCircle, label: 'Replays', path: '/replays' },
+  { icon: SlidersHorizontal, label: 'Settings', path: '/settings' },
 ];
 
 const practiceItems = [
