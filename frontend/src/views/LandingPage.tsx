@@ -1,5 +1,8 @@
 'use client';
 
+import { useState } from 'react';
+import LoginModal from '@/auth/LoginModal';
+import { useAuth } from '@/auth/AuthProvider';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Zap, MessageSquare, Mic } from 'lucide-react';
@@ -39,9 +42,28 @@ const features = [
 
 export default function LandingPage() {
   const router = useRouter();
+  const { user } = useAuth();
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+
+  const openLogin = () => {
+    if (user) {
+      router.push('/home');
+      return;
+    }
+    setIsLoginOpen(true);
+  };
 
   return (
     <div className="min-h-screen bg-cream-100">
+      <LoginModal
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+        onSuccess={() => {
+          setIsLoginOpen(false);
+          router.push('/home');
+        }}
+      />
+
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-[100] opacity-[0.03]"
@@ -69,13 +91,13 @@ export default function LandingPage() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.push('/home')}
+            onClick={openLogin}
             className="px-5 py-2 text-sm text-slate-600 hover:text-slate-900 transition-colors rounded-full hover:bg-cream-200"
           >
             Log in
           </button>
           <button
-            onClick={() => router.push('/home')}
+            onClick={openLogin}
             className="px-5 py-2 text-sm bg-navy-500 text-white rounded-full hover:bg-navy-600 transition-all shadow-md"
           >
             Get started
@@ -148,7 +170,7 @@ export default function LandingPage() {
           className="flex items-center gap-4 mb-12"
         >
           <button
-            onClick={() => router.push('/home')}
+            onClick={openLogin}
             className="px-7 py-3 bg-navy-500 text-white rounded-full font-medium hover:bg-navy-600 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
           >
             Start practicing free
