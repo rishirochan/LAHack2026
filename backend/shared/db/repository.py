@@ -88,6 +88,9 @@ class SessionRepository(Protocol):
     async def get_user_trends(self, *, user_id: str = DEFAULT_USER_ID) -> dict[str, Any]:
         ...
 
+    async def get_profile_summary(self, *, user_id: str | None = DEFAULT_USER_ID) -> dict[str, Any]:
+        ...
+
     async def close(self) -> None:
         ...
 
@@ -329,6 +332,18 @@ class InMemorySessionRepository:
             chunks=chunks,
             sessions=list(self._documents.values()),
         )
+
+    async def get_profile_summary(self, *, user_id: str | None = DEFAULT_USER_ID) -> dict[str, Any]:
+        sessions = [
+            deepcopy(document)
+            for document in self._documents.values()
+            if user_id is None or document.get("user_id") == user_id
+        ]
+        chunks = [
+            chunk for chunk in self._chunks.values()
+            if user_id is None or chunk.get("user_id") == user_id
+        ]
+        return _build_profile_summary(user_id=user_id or "all", sessions=sessions, chunks=chunks)
 
     async def close(self) -> None:
         return None
@@ -613,6 +628,19 @@ class MongoSessionRepository:
             chunks=chunks,
             sessions=sessions,
         )
+
+    async def get_profile_summary(self, *, user_id: str | None = DEFAULT_USER_ID) -> dict[str, Any]:
+        session_filter = {} if user_id is None else {"user_id": user_id}
+        chunk_filter = {} if user_id is None else {"user_id": user_id}
+        sessions = [
+            _strip_mongo_id(document)
+            async for document in self._collection.find(session_filter)
+        ]
+        chunks = [
+            _strip_mongo_id(document)
+            async for document in self._chunks_collection.find(chunk_filter)
+        ]
+        return _build_profile_summary(user_id=user_id or "all", sessions=sessions, chunks=chunks)
 
     async def close(self) -> None:
         self._client.close()
@@ -1126,3 +1154,191 @@ def _without_none(document: dict[str, Any]) -> dict[str, Any]:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _build_profile_summary(
+    *,
+    user_id: str,
+    sessions: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    phase_a_sessions = [s for s in sessions if s.get("mode") == "phase_a"]
+    phase_b_sessions = [s for s in sessions if s.get("mode") == "phase_b"]
+
+    total_practice_minutes = _estimate_practice_minutes(phase_a_sessions, chunks)
+
+    phase_a_stats = _build_phase_a_stats(phase_a_sessions)
+    phase_b_stats = _build_phase_b_stats(phase_b_sessions, chunks)
+
+    score_history = _score_history(sessions)
+
+    recent = sorted(sessions, key=lambda s: s.get("updated_at") or s.get("created_at") or "", reverse=True)[:10]
+    recent_previews = [_profile_session_preview(s) for s in recent]
+
+    completed_sessions = [s for s in sessions if s.get("status") == "complete"]
+
+    return {
+        "user_id": user_id,
+        "total_sessions": len(sessions),
+        "completed_sessions": len(completed_sessions),
+        "completion_rate": round(len(completed_sessions) / len(sessions) * 100) if sessions else 0,
+        "total_practice_minutes": total_practice_minutes,
+        "phase_a": phase_a_stats,
+        "phase_b": phase_b_stats,
+        "score_history": score_history,
+        "recent_sessions": recent_previews,
+    }
+
+
+def _build_phase_a_stats(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    all_scores: list[float] = []
+    scores_by_emotion: dict[str, list[float]] = {}
+    filler_rates: list[float] = []
+    score_over_time: list[dict[str, Any]] = []
+
+    for session in sessions:
+        summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
+        setup = session.get("setup") if isinstance(session.get("setup"), dict) else {}
+        target_emotion = str(setup.get("target_emotion") or "Unknown")
+        match_scores = summary.get("match_scores") if isinstance(summary, dict) else None
+
+        if isinstance(match_scores, list) and match_scores:
+            avg = sum(match_scores) / len(match_scores)
+            all_scores.append(avg)
+            scores_by_emotion.setdefault(target_emotion, []).append(avg)
+            score_over_time.append({
+                "session_id": session.get("session_id"),
+                "date": (session.get("completed_at") or session.get("updated_at") or ""),
+                "score": round(avg * 100),
+                "target_emotion": target_emotion,
+            })
+
+        rounds = summary.get("rounds") if isinstance(summary, dict) else None
+        if isinstance(rounds, list):
+            for rnd in rounds:
+                if isinstance(rnd, dict):
+                    fr = rnd.get("filler_rate")
+                    if isinstance(fr, (int, float)):
+                        filler_rates.append(float(fr))
+
+    avg_by_emotion = {
+        emotion: round(sum(s) / len(s) * 100)
+        for emotion, s in scores_by_emotion.items()
+        if s
+    }
+
+    best_emotion = max(avg_by_emotion, key=lambda e: avg_by_emotion[e]) if avg_by_emotion else None
+    worst_emotion = min(avg_by_emotion, key=lambda e: avg_by_emotion[e]) if avg_by_emotion else None
+
+    score_over_time.sort(key=lambda x: x.get("date") or "")
+
+    return {
+        "session_count": len(sessions),
+        "average_match_score": round(sum(all_scores) / len(all_scores) * 100) if all_scores else None,
+        "average_filler_rate": round(sum(filler_rates) / len(filler_rates), 3) if filler_rates else None,
+        "average_score_by_emotion": avg_by_emotion,
+        "best_emotion": best_emotion,
+        "worst_emotion": worst_emotion,
+        "score_over_time": score_over_time,
+    }
+
+
+def _build_phase_b_stats(
+    sessions: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    b_session_ids = {s.get("session_id") for s in sessions}
+    b_chunks = [c for c in chunks if c.get("session_id") in b_session_ids]
+
+    eye_contacts = [
+        float(c["eye_contact_pct"])
+        for c in b_chunks
+        if c.get("eye_contact_pct") is not None
+    ]
+    video_counter = Counter(
+        str(c.get("dominant_video_emotion"))
+        for c in b_chunks
+        if c.get("dominant_video_emotion")
+    )
+    audio_counter = Counter(
+        str(c.get("dominant_audio_emotion"))
+        for c in b_chunks
+        if c.get("dominant_audio_emotion")
+    )
+    chunks_failed = sum(1 for c in b_chunks if c.get("status") == "failed")
+    chunks_timed_out = sum(1 for c in b_chunks if c.get("status") == "timed_out")
+
+    eye_contact_over_time: list[dict[str, Any]] = []
+    for session in sorted(sessions, key=lambda s: s.get("updated_at") or s.get("created_at") or ""):
+        summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
+        ec = summary.get("avg_eye_contact_pct") if isinstance(summary, dict) else None
+        if ec is not None:
+            eye_contact_over_time.append({
+                "session_id": session.get("session_id"),
+                "date": session.get("completed_at") or session.get("updated_at") or "",
+                "eye_contact_pct": ec,
+            })
+
+    avg_turns = None
+    if sessions:
+        turn_counts = [
+            int((s.get("summary") or {}).get("total_turns") or 0)
+            for s in sessions
+            if isinstance(s.get("summary"), dict)
+        ]
+        if turn_counts:
+            avg_turns = round(sum(turn_counts) / len(turn_counts), 1)
+
+    return {
+        "session_count": len(sessions),
+        "average_eye_contact_pct": round(sum(eye_contacts) / len(eye_contacts), 1) if eye_contacts else None,
+        "dominant_video_emotions": dict(video_counter.most_common(5)),
+        "dominant_audio_emotions": dict(audio_counter.most_common(5)),
+        "chunks_failed": chunks_failed,
+        "chunks_timed_out": chunks_timed_out,
+        "chunk_count": len(b_chunks),
+        "avg_turns_per_session": avg_turns,
+        "eye_contact_over_time": eye_contact_over_time,
+    }
+
+
+def _estimate_practice_minutes(
+    phase_a_sessions: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+) -> int:
+    minutes = len(phase_a_sessions) * 3
+    for chunk in chunks:
+        start_ms = chunk.get("start_ms") or 0
+        end_ms = chunk.get("end_ms") or 0
+        if end_ms > start_ms:
+            minutes += (end_ms - start_ms) / 60000
+    return round(minutes)
+
+
+def _profile_session_preview(session: dict[str, Any]) -> dict[str, Any]:
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
+    setup = session.get("setup") if isinstance(session.get("setup"), dict) else {}
+    mode = str(session.get("mode") or "")
+    label = "Practice Session"
+    score = None
+
+    if mode == "phase_a":
+        label = str(setup.get("target_emotion") or "Emotion Drill")
+        scores = summary.get("match_scores") if isinstance(summary, dict) else None
+        if isinstance(scores, list) and scores:
+            score = round(float(sum(scores) / len(scores)) * 100)
+    elif mode == "phase_b":
+        label = str(setup.get("scenario") or "Conversation").replace("_", " ").title()
+        ec = summary.get("avg_eye_contact_pct") if isinstance(summary, dict) else None
+        if ec is not None:
+            score = round(float(ec))
+
+    return {
+        "session_id": session.get("session_id"),
+        "mode": mode,
+        "mode_label": session.get("mode_label"),
+        "label": label,
+        "status": session.get("status"),
+        "score": score,
+        "date": session.get("completed_at") or session.get("updated_at"),
+    }

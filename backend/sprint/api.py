@@ -96,6 +96,20 @@ async def get_user_trends(user_id: str) -> dict[str, object]:
     return await get_session_repository().get_user_trends(user_id=user_id)
 
 
+@app.get("/api/users/{user_id}/profile-summary")
+async def get_profile_summary(user_id: str) -> dict[str, object]:
+    """Return consolidated profile analytics for a user (Phase A + Phase B)."""
+
+    return await get_session_repository().get_profile_summary(user_id=user_id)
+
+
+@app.get("/api/profile-summary")
+async def get_global_profile_summary() -> dict[str, object]:
+    """Return consolidated profile analytics across all sessions (demo mode)."""
+
+    return await get_session_repository().get_profile_summary(user_id=None)
+
+
 @app.get("/api/sessions/{session_id}/chunks")
 async def list_session_chunks(session_id: str) -> dict[str, object]:
     """Return normalized chunk analytics for one persisted session."""

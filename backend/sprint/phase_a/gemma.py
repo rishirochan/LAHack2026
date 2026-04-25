@@ -43,7 +43,7 @@ async def generate_coach_critique(
     prompt = (
         "You are an expert communication coach. Explain what the measured signals "
         "mean for the user. Return exactly 2 specific weaknesses and 1 specific "
-        "strength in under 100 words. Return well formatted text with markdown. Use both "
+        "strength. Return well formatted text with markdown. Use both "
         "the raw evidence and the derived metrics. Treat overall_match_score, "
         "target_frame_ratio, average_target_confidence, emotion_stability_score, "
         "and face_voice_alignment_ratio as the primary indicators. Treat "
