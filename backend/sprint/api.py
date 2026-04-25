@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from urllib.parse import quote
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -189,11 +190,21 @@ async def submit_phase_a_recording(
         round_index = get_session_manager().get_next_round_index(session_id)
         video_upload = await _save_media_upload(
             video_file,
-            storage_key=_phase_a_storage_key(session_id, round_index, "video", ".webm"),
+            storage_key=_phase_a_storage_key(
+                session_id,
+                round_index,
+                "video",
+                _upload_suffix(video_file, ".webm"),
+            ),
         )
         audio_upload = await _save_media_upload(
             audio_file,
-            storage_key=_phase_a_storage_key(session_id, round_index, "audio", ".webm"),
+            storage_key=_phase_a_storage_key(
+                session_id,
+                round_index,
+                "audio",
+                _upload_suffix(audio_file, ".wav"),
+            ),
         )
         if int(video_upload.get("size_bytes") or 0) == 0 or int(audio_upload.get("size_bytes") or 0) == 0:
             await get_session_manager().send_event(
@@ -282,8 +293,22 @@ async def _save_media_upload(
     }
 
 
+async def _save_upload(upload: UploadFile, *, suffix: str) -> str:
+    """Persist an upload to a temp file for background-only integrations."""
+
+    with NamedTemporaryFile(delete=False, suffix=suffix) as output:
+        data = await upload.read()
+        output.write(data)
+        return output.name
+
+
 def _phase_a_storage_key(session_id: str, round_index: int, media_kind: str, suffix: str) -> str:
     return f"phase_a/{session_id}/round_{round_index}/{media_kind}{suffix}"
+
+
+def _upload_suffix(upload: UploadFile, fallback: str) -> str:
+    suffix = Path(upload.filename or "").suffix.lower()
+    return suffix or fallback
 
 
 def _phase_b_chunk_storage_key(
@@ -793,35 +818,28 @@ async def _process_phase_b_chunk(
     """Background task: upload to Imentiv, poll for results, update chunk."""
 
     from backend.shared.ai import get_settings
-    from backend.sprint.phase_b.imentiv import (
-        get_audio_emotions,
-        get_video_emotions,
-        upload_audio,
-        upload_video,
-    )
+    from backend.sprint.phase_b.imentiv import analyze_video
 
     manager = get_phase_b_manager()
     settings = get_settings()
 
     try:
         manager.update_chunk(session_id, chunk_index, {"status": "processing"})
-        video_id, audio_id = await asyncio.gather(
-            upload_video(settings, video_upload),
-            upload_audio(settings, audio_upload),
-        )
-
-        video_emotions, audio_emotions = await asyncio.gather(
-            _soft_result(get_video_emotions(settings, video_id)),
-            _soft_result(get_audio_emotions(settings, audio_id)),
+        analysis = await analyze_video(
+            settings,
+            video_upload,
+            title=f"phase-b-{session_id}-chunk-{chunk_index}",
+            description="Phase B conversation chunk analysis.",
         )
 
         manager.update_chunk(session_id, chunk_index, {
-            "video_emotions": video_emotions if isinstance(video_emotions, list) else [],
-            "audio_emotions": audio_emotions if isinstance(audio_emotions, list) else [],
+            "imentiv_analysis": analysis,
+            "video_emotions": analysis.get("video_emotions") if isinstance(analysis.get("video_emotions"), list) else [],
+            "audio_emotions": analysis.get("audio_emotions") if isinstance(analysis.get("audio_emotions"), list) else [],
             "status": "done",
         })
-    except Exception:
-        manager.update_chunk(session_id, chunk_index, {"status": "failed"})
+    except Exception as error:
+        manager.update_chunk(session_id, chunk_index, {"status": "failed", "error": str(error)})
 
 
 async def _soft_result(awaitable):
@@ -956,7 +974,10 @@ async def phase_c_transcribe(session_id: str, audio_file: UploadFile = File(...)
     from backend.shared.ai import get_ai_service
     from backend.sprint.phase_c.elevenlabs import transcribe_audio
 
-    transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+    try:
+        transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+    finally:
+        Path(audio_path).unlink(missing_ok=True)
     get_phase_c_manager().store_transcript(session_id, transcript, words)
     return {"transcript": transcript, "word_count": len(words)}
 
@@ -999,34 +1020,31 @@ async def _process_phase_c_chunk(
     audio_path: str,
 ) -> None:
     from backend.shared.ai import get_settings
-    from backend.sprint.phase_c.imentiv import (
-        get_audio_emotions,
-        get_video_emotions,
-        upload_audio,
-        upload_video,
-    )
+    from backend.sprint.phase_c.imentiv import analyze_video
 
     manager = get_phase_c_manager()
     settings = get_settings()
 
     try:
         manager.update_chunk(session_id, chunk_index, {"status": "processing"})
-        video_id, audio_id = await asyncio.gather(
-            upload_video(settings, video_path),
-            upload_audio(settings, audio_path),
-        )
-        video_emotions, audio_emotions = await asyncio.gather(
-            _soft_result(get_video_emotions(settings, video_id)),
-            _soft_result(get_audio_emotions(settings, audio_id)),
+        analysis = await analyze_video(
+            settings,
+            video_path,
+            title=f"phase-c-{session_id}-chunk-{chunk_index}",
+            description="Phase C freeform speaking chunk analysis.",
         )
         manager.update_chunk(
             session_id,
             chunk_index,
             {
-                "video_emotions": video_emotions if isinstance(video_emotions, list) else [],
-                "audio_emotions": audio_emotions if isinstance(audio_emotions, list) else [],
+                "imentiv_analysis": analysis,
+                "video_emotions": analysis.get("video_emotions") if isinstance(analysis.get("video_emotions"), list) else [],
+                "audio_emotions": analysis.get("audio_emotions") if isinstance(analysis.get("audio_emotions"), list) else [],
                 "status": "done",
             },
         )
-    except Exception:
-        manager.update_chunk(session_id, chunk_index, {"status": "failed"})
+    except Exception as error:
+        manager.update_chunk(session_id, chunk_index, {"status": "failed", "error": str(error)})
+    finally:
+        Path(video_path).unlink(missing_ok=True)
+        Path(audio_path).unlink(missing_ok=True)

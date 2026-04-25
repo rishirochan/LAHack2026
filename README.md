@@ -1,28 +1,37 @@
-# LAHacks 2026 Backend Setup
+# LAHacks 2026 Demo Setup
 
-## AI Integration Prerequisites
+## Quick Start
 
-The backend now has a shared AI integration layer under `backend/shared/ai` so every backend module can import the same provider configuration and clients.
+Run the backend and frontend in separate terminals from the repository root.
 
-### 1) Install Dependencies
+```powershell
+uv sync
+uv run uvicorn backend.sprint.api:app --reload --host 0.0.0.0 --port 8000
+```
 
-Use your Python package workflow to install dependencies from `pyproject.toml`.
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-### 2) Configure Environment Variables
+Open `http://localhost:3000`.
 
-Copy `.env.example` to `.env`, then fill in real values:
+## Environment
 
-- `OPENROUTER_API_KEY` (optional unless using the legacy OpenRouter facade)
+Copy `.env.example` to `.env`, then fill in real values. The frontend defaults to `http://localhost:8000` and `ws://localhost:8000`; for different hosts, copy `frontend/.env.example` to `frontend/.env.local`.
+
+- `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL_GEMMA`
 - `OPENROUTER_MODEL_HAIKU`
-- `GOOGLE_AI_API_KEY`
-- `GOOGLE_GEMMA_MODEL` (defaults to `gemma-4`)
 - `ELEVENLABS_API_KEY`
 - `ELEVENLABS_DEFAULT_VOICE_ID`
 - `ELEVENLABS_STT_MODEL` (default `scribe_v1` is prefilled)
 - `ELEVENLABS_TTS_MODEL` (default `eleven_multilingual_v2` is prefilled)
 - `IMENTIV_API_KEY`
-- `IMENTIV_BASE_URL` (defaults to `https://api.imentiv.ai/v2`)
+- `IMENTIV_BASE_URL` (defaults to `https://api.imentiv.ai/`)
+- `IMENTIV_USER_CONSENT_VERSION` (defaults to `2.0.0`)
+- `IMENTIV_MOCK=false` for live Imentiv analysis during the demo
 - `MONGODB_ENABLED` (set `true` when using MongoDB Atlas persistence)
 - `MONGODB_URI` (your MongoDB Atlas connection string; keep this in local `.env`)
 - `MONGODB_DB_NAME` (defaults to `voxcoach`)
@@ -31,21 +40,18 @@ Copy `.env.example` to `.env`, then fill in real values:
 
 `OPENROUTER_BASE_URL` defaults to `https://openrouter.ai/api/v1`.
 
-### 3) Shared Imports
+## Integration Notes
 
-Use these shared entrypoints anywhere in backend code:
+The backend has a shared AI integration layer under `backend/shared/ai` and a backend-only Imentiv wrapper under `backend/shared/imentiv.py`.
 
 - `from backend.shared.ai import get_settings, validate_settings`
 - `from backend.shared.ai import get_ai_service`
+- `from backend.shared.imentiv import get_imentiv_client`
 
-`get_ai_service()` gives access to:
+Phase A, B, and C keep Imentiv API calls on the backend. Recordings are saved server-side, uploaded to Imentiv with `X-API-Key`, and normalized before being returned through existing session status/result endpoints and websocket events.
 
-- OpenRouter Gemma chat model
-- OpenRouter Haiku chat model
-- ElevenLabs client (TTS/STT ready)
-
-Phase A Emotion Drills uses Google AI/Gemma for both scenario generation and critique generation, ElevenLabs for speech-to-text and TTS playback, and Imentiv for video/audio emotion analysis.
-
-### 4) MongoDB Persistence
+## MongoDB Persistence
 
 MongoDB stores durable practice-session history for the dashboard while live websocket coordination remains in memory. Create a MongoDB Atlas database user with read/write access, allow your current IP in Network Access, then paste your Atlas URI into `.env` as `MONGODB_URI`.
+
+For a no-network local rehearsal, set `MONGODB_ENABLED=false` and `IMENTIV_MOCK=true`.
