@@ -7,7 +7,7 @@ from urllib.parse import quote
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -24,11 +24,12 @@ from backend.sprint.phase_a.schemas import (
 from backend.sprint.phase_a.session_manager import get_session_manager
 from backend.sprint.phase_b.schemas import (
     ChunkUploadMeta,
+    NextTurnRequest,
     SessionStateResponse,
     StartConversationRequest,
     StartConversationResponse,
 )
-from backend.sprint.phase_b.graph import critique_graph, end_graph, prompt_graph
+from backend.sprint.phase_b.graph import critique_graph, decide_momentum, end_graph, prompt_graph, stream_peer_tts
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 from backend.sprint.phase_c.constants import (
     PHASE_C_MAX_SECONDS,
@@ -126,6 +127,43 @@ async def get_persisted_session(session_id: str) -> dict[str, object]:
     return session
 
 
+@app.get("/api/tts/voices")
+async def list_tts_voices() -> dict[str, object]:
+    """Return normalized ElevenLabs voice metadata for the settings UI."""
+
+    from backend.shared.ai import get_ai_service
+    from backend.shared.ai.providers.elevenlabs import list_voice_options
+
+    ai_service = get_ai_service()
+    return {"voices": list_voice_options(ai_service.elevenlabs_client, ai_service.settings)}
+
+
+@app.post("/api/tts/preview")
+async def preview_tts_voice(payload: dict[str, object]) -> Response:
+    """Synthesize one short preview clip for a chosen voice."""
+
+    from backend.shared.ai import get_ai_service
+    from backend.sprint.phase_b.elevenlabs import synthesize_tts_audio
+
+    voice_id = str(payload.get("voice_id") or "").strip() or None
+    voice_name = str(payload.get("voice_name") or "").strip()
+    text = str(payload.get("text") or "").strip() or _build_voice_preview_text(voice_name)
+
+    if voice_id is None:
+        raise HTTPException(status_code=400, detail="A voice_id is required to preview TTS.")
+
+    try:
+        audio = await synthesize_tts_audio(
+            ai_service=get_ai_service(),
+            text=text,
+            voice_id=voice_id,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Voice preview failed: {error}") from error
+
+    return Response(content=audio, media_type="audio/mpeg")
+
+
 def _to_session_preview(session: dict) -> dict[str, object]:
     summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
     setup = session.get("setup") if isinstance(session.get("setup"), dict) else {}
@@ -154,6 +192,13 @@ def _to_session_preview(session: dict) -> dict[str, object]:
         "total_turns": summary.get("total_turns") if isinstance(summary, dict) else None,
         "round_count": len(summary.get("rounds", [])) if isinstance(summary.get("rounds"), list) else None,
     }
+
+
+def _build_voice_preview_text(voice_name: str) -> str:
+    spoken_name = " ".join(voice_name.split()).strip("., ")
+    if not spoken_name:
+        spoken_name = "your selected voice"
+    return f"Hi, my name is {spoken_name}. Here's what I sound like at your selected speed."
 
 
 @app.post("/api/phase-a/sessions", response_model=StartSessionResponse)
@@ -502,9 +547,11 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
     """Create a new Phase B conversation session."""
 
     session = get_phase_b_manager().create_session(
-        scenario=request.scenario,
         difficulty=request.difficulty,
+        scenario_preference=request.scenario_preference,
+        voice_id=request.voice_id,
         max_turns=request.max_turns,
+        minimum_turns=request.minimum_turns,
     )
     return StartConversationResponse(session_id=session.session_id)
 
@@ -522,12 +569,19 @@ async def get_phase_b_session(session_id: str) -> SessionStateResponse:
         session_id=state["session_id"],
         scenario=state["scenario"],
         difficulty=state["difficulty"],
-        persona=state["persona"],
+        scenario_preference=state.get("scenario_preference"),
+        voice_id=state.get("voice_id"),
+        peer_profile=state.get("peer_profile"),
+        starter_topic=state.get("starter_topic"),
+        opening_line=state.get("opening_line"),
         turn_index=state["turn_index"],
         max_turns=state["max_turns"],
+        minimum_turns=state["minimum_turns"],
         conversation_history=state["conversation_history"],
         current_turn=_public_phase_b_turn(session_id, state.get("current_turn")),
         turns=[turn for turn in (_public_phase_b_turn(session_id, turn) for turn in state["turns"]) if turn],
+        momentum_decision=state.get("momentum_decision"),
+        final_report=state.get("final_report"),
         status=state["status"],
     )
 
@@ -547,7 +601,10 @@ async def phase_b_websocket(websocket: WebSocket, session_id: str) -> None:
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/next")
-async def phase_b_next_turn(session_id: str) -> dict[str, str]:
+async def phase_b_next_turn(
+    session_id: str,
+    request: NextTurnRequest | None = None,
+) -> dict[str, str]:
     """Generate the next AI prompt and stream it as TTS over the websocket.
 
     This runs the ``prompt_graph`` LangGraph subgraph which calls Gemma via
@@ -563,36 +620,21 @@ async def phase_b_next_turn(session_id: str) -> dict[str, str]:
         raise HTTPException(status_code=409, detail="Session is not active.")
     if state["turn_index"] >= state["max_turns"]:
         raise HTTPException(status_code=409, detail="All turns have been completed.")
+    if get_phase_b_manager().has_active_turn(session_id):
+        raise HTTPException(status_code=409, detail="Finish the active turn before requesting the next one.")
 
-    # Run generate_prompt subgraph (sends events over websocket)
+    if request is not None:
+        get_phase_b_manager().set_voice_id(session_id, request.voice_id)
+        state = get_phase_b_manager().get_state(session_id)
+
     await prompt_graph.ainvoke(
         state,
         config={"configurable": {"session_id": session_id}},
     )
 
-    # Stream TTS of the prompt over websocket
     updated = get_phase_b_manager().get_state(session_id)
-    current = updated.get("current_turn")
-    if current and current.get("prompt_text"):
-        from backend.sprint.phase_b.elevenlabs import stream_tts_chunks
-        from backend.shared.ai import get_ai_service
+    await stream_peer_tts(session_id)
 
-        await get_phase_b_manager().send_event(
-            session_id,
-            "tts_start",
-            {"audio_type": "prompt", "text": current["prompt_text"]},
-        )
-        async for chunk in stream_tts_chunks(ai_service=get_ai_service(), text=current["prompt_text"]):
-            await get_phase_b_manager().send_event(
-                session_id,
-                "audio_chunk",
-                {"audio_type": "prompt", "chunk": chunk, "mime_type": "audio/mpeg"},
-            )
-        await get_phase_b_manager().send_event(
-            session_id, "tts_end", {"audio_type": "prompt"},
-        )
-
-    # Signal frontend that recording can begin
     await get_phase_b_manager().send_event(
         session_id,
         "recording_ready",
@@ -631,16 +673,28 @@ async def phase_b_upload_chunk(
         raise HTTPException(status_code=400, detail="Chunk start_ms must be non-negative.")
     if end_ms <= start_ms:
         raise HTTPException(status_code=400, detail="Chunk end_ms must be greater than start_ms.")
-    if get_phase_b_manager().has_chunk(session_id, chunk_index):
+    if get_phase_b_manager().has_chunk(session_id, turn_index, chunk_index):
         raise HTTPException(status_code=409, detail=f"Chunk {chunk_index} has already been uploaded.")
 
     video_upload = await _save_media_upload(
         video_file,
-        storage_key=_phase_b_chunk_storage_key(session_id, turn_index, chunk_index, "video", ".webm"),
+        storage_key=_phase_b_chunk_storage_key(
+            session_id,
+            turn_index,
+            chunk_index,
+            "video",
+            _upload_suffix(video_file, ".webm"),
+        ),
     )
     audio_upload = await _save_media_upload(
         audio_file,
-        storage_key=_phase_b_chunk_storage_key(session_id, turn_index, chunk_index, "audio", ".webm"),
+        storage_key=_phase_b_chunk_storage_key(
+            session_id,
+            turn_index,
+            chunk_index,
+            "audio",
+            _upload_suffix(audio_file, ".webm"),
+        ),
     )
     if int(video_upload.get("size_bytes") or 0) == 0 or int(audio_upload.get("size_bytes") or 0) == 0:
         raise HTTPException(status_code=400, detail="Chunk uploads must contain non-empty audio and video.")
@@ -665,7 +719,7 @@ async def phase_b_upload_chunk(
 
     # Launch background Imentiv processing
     asyncio.create_task(
-        _process_phase_b_chunk(session_id, chunk_index, video_upload, audio_upload)
+        _process_phase_b_chunk(session_id, turn_index, chunk_index, video_upload, audio_upload)
     )
 
     return {"status": "accepted", "chunk_index": str(chunk_index)}
@@ -690,7 +744,11 @@ async def phase_b_transcribe(
 
     transcript_audio_upload = await _save_media_upload(
         audio_file,
-        storage_key=_phase_b_transcript_storage_key(session_id, turn_index, ".webm"),
+        storage_key=_phase_b_transcript_storage_key(
+            session_id,
+            turn_index,
+            _upload_suffix(audio_file, ".webm"),
+        ),
     )
     if int(transcript_audio_upload.get("size_bytes") or 0) == 0:
         await get_phase_b_manager().send_event(
@@ -700,23 +758,26 @@ async def phase_b_transcribe(
         )
         raise HTTPException(status_code=409, detail=RETRY_EMPTY_MESSAGE)
 
-    get_phase_b_manager().store_transcript_upload(session_id, transcript_audio_upload)
+    get_phase_b_manager().store_transcript_upload(session_id, turn_index, transcript_audio_upload)
 
     from backend.sprint.phase_b.elevenlabs import transcribe_audio
     from backend.shared.ai import get_ai_service
 
-    transcript, words = await transcribe_audio(
-        ai_service=get_ai_service(),
-        audio_source=transcript_audio_upload,
-    )
+    try:
+        transcript, words = await transcribe_audio(
+            ai_service=get_ai_service(),
+            audio_source=transcript_audio_upload,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {error}") from error
 
-    get_phase_b_manager().store_transcript(session_id, transcript, words)
+    get_phase_b_manager().store_transcript(session_id, turn_index, transcript, words)
 
     return {"transcript": transcript, "word_count": len(words)}
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/{turn_index}/complete")
-async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, str]:
+async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, object]:
     """Run the critique pipeline after recording + chunks + STT are done.
 
     Executes: collect_chunks → merge_summary → judge_response → speak_critique
@@ -733,6 +794,7 @@ async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, s
 
     is_valid, validation_error, recording_window = get_phase_b_manager().validate_turn_chunks(
         session_id,
+        turn_index=turn_index,
         min_seconds=PHASE_B_MIN_SECONDS,
         max_seconds=PHASE_B_MAX_SECONDS,
     )
@@ -748,25 +810,40 @@ async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, s
 
     get_phase_b_manager().set_recording_window(
         session_id,
+        turn_index,
         recording_window["recording_start_ms"],
         recording_window["recording_end_ms"],
     )
 
-    # Run the critique subgraph
     await critique_graph.ainvoke(
         state,
         config={"configurable": {"session_id": session_id}},
     )
 
-    # Finalize the turn in the session manager
-    updated_state = get_phase_b_manager().get_state(session_id)
-    current_turn = updated_state.get("current_turn")
-    if current_turn:
-        critique = current_turn.get("critique") or ""
-        merged = current_turn.get("merged_summary") or {}
-        get_phase_b_manager().finish_turn(session_id, critique, merged)
+    completed_turn = get_phase_b_manager().finish_turn(session_id, turn_index)
+    momentum = await decide_momentum(session_id)
 
-    return {"status": "turn_complete"}
+    if not momentum.get("continue_conversation", True):
+        latest_state = get_phase_b_manager().get_state(session_id)
+        await end_graph.ainvoke(
+            latest_state,
+            config={"configurable": {"session_id": session_id}},
+        )
+        final_state = get_phase_b_manager().get_state(session_id)
+        return {
+            "status": "session_complete",
+            "continue_conversation": False,
+            "turn_analysis": completed_turn.get("turn_analysis"),
+            "momentum_reason": momentum.get("reason"),
+            "final_report": final_state.get("final_report"),
+        }
+
+    return {
+        "status": "turn_complete",
+        "continue_conversation": True,
+        "turn_analysis": completed_turn.get("turn_analysis"),
+        "momentum_reason": momentum.get("reason"),
+    }
 
 
 @app.post("/api/phase-b/sessions/{session_id}/end")
@@ -787,14 +864,8 @@ async def phase_b_end_session(session_id: str) -> dict[str, object]:
     return {
         "status": final["status"],
         "total_turns": len(final["turns"]),
-        "turns": [
-            {
-                "turn_index": t["turn_index"],
-                "prompt": t["prompt_text"],
-                "critique": t.get("critique"),
-            }
-            for t in final["turns"]
-        ],
+        "turns": [_public_phase_b_turn(session_id, turn) for turn in final["turns"]],
+        "final_report": final.get("final_report"),
     }
 
 
@@ -825,6 +896,7 @@ async def download_phase_b_transcript_audio(session_id: str, turn_index: int) ->
 
 async def _process_phase_b_chunk(
     session_id: str,
+    turn_index: int,
     chunk_index: int,
     video_upload: dict[str, object],
     audio_upload: dict[str, object],
@@ -838,22 +910,22 @@ async def _process_phase_b_chunk(
     settings = get_settings()
 
     try:
-        manager.update_chunk(session_id, chunk_index, {"status": "processing"})
+        manager.update_chunk(session_id, turn_index, chunk_index, {"status": "processing"})
         analysis = await analyze_video(
             settings,
             video_upload,
-            title=f"phase-b-{session_id}-chunk-{chunk_index}",
+            title=f"phase-b-{session_id}-turn-{turn_index}-chunk-{chunk_index}",
             description="Phase B conversation chunk analysis.",
         )
 
-        manager.update_chunk(session_id, chunk_index, {
+        manager.update_chunk(session_id, turn_index, chunk_index, {
             "imentiv_analysis": analysis,
             "video_emotions": analysis.get("video_emotions") if isinstance(analysis.get("video_emotions"), list) else [],
             "audio_emotions": analysis.get("audio_emotions") if isinstance(analysis.get("audio_emotions"), list) else [],
             "status": "done",
         })
     except Exception as error:
-        manager.update_chunk(session_id, chunk_index, {"status": "failed", "error": str(error)})
+        manager.update_chunk(session_id, turn_index, chunk_index, {"status": "failed", "error": str(error)})
 
 
 async def _soft_result(awaitable):
