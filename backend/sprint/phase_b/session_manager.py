@@ -10,8 +10,11 @@ from backend.shared.db import get_session_repository
 from backend.shared.db.tasks import schedule_repository_write
 from backend.sprint.phase_b.schemas import (
     ChunkRecord,
+    FinalReport,
+    MomentumDecision,
+    PeerProfile,
     PhaseBState,
-    Scenario,
+    TurnAnalysis,
     TurnState,
     build_initial_state,
     build_turn_state,
@@ -40,12 +43,20 @@ class PhaseBSessionManager:
 
     def create_session(
         self,
-        scenario: Scenario,
+        *,
         difficulty: int,
-        max_turns: int = 4,
+        scenario_preference: str | None,
+        max_turns: int = 6,
+        minimum_turns: int = 3,
     ) -> ActiveConversation:
         session_id = str(uuid4())
-        state = build_initial_state(session_id, scenario, difficulty, max_turns)
+        state = build_initial_state(
+            session_id=session_id,
+            difficulty=difficulty,
+            scenario_preference=scenario_preference,
+            max_turns=max_turns,
+            minimum_turns=minimum_turns,
+        )
         session = ActiveConversation(session_id=session_id, state=state)
         self._sessions[session_id] = session
         schedule_repository_write(
@@ -65,6 +76,25 @@ class PhaseBSessionManager:
     def get_state(self, session_id: str) -> PhaseBState:
         return self.get_session(session_id).state
 
+    def initialize_context(
+        self,
+        session_id: str,
+        *,
+        scenario: str,
+        peer_profile: PeerProfile,
+        starter_topic: str,
+        opening_line: str,
+    ) -> None:
+        state = self.get_state(session_id)
+        state["scenario"] = scenario
+        state["peer_profile"] = peer_profile
+        state["starter_topic"] = starter_topic
+        state["opening_line"] = opening_line
+        self.persist_state(session_id)
+
+    def has_active_turn(self, session_id: str) -> bool:
+        return self.get_state(session_id).get("current_turn") is not None
+
     # ------------------------------------------------------------------
     # Turn management
     # ------------------------------------------------------------------
@@ -79,9 +109,17 @@ class PhaseBSessionManager:
         self.persist_state(session_id)
         return turn
 
-    def add_chunk(self, session_id: str, chunk: ChunkRecord) -> None:
-        """Append a chunk record to the current turn."""
+    def get_turn(self, session_id: str, turn_index: int) -> TurnState:
+        state = self.get_state(session_id)
+        current = state.get("current_turn")
+        if isinstance(current, dict) and current["turn_index"] == turn_index:
+            return current
+        for turn in state["turns"]:
+            if turn["turn_index"] == turn_index:
+                return turn
+        raise RuntimeError(f"Turn {turn_index} was not found.")
 
+    def add_chunk(self, session_id: str, chunk: ChunkRecord) -> None:
         state = self.get_state(session_id)
         current = state.get("current_turn")
         if current is None:
@@ -89,64 +127,47 @@ class PhaseBSessionManager:
         current["chunks"].append(chunk)
         self.persist_state(session_id)
 
-    def has_chunk(self, session_id: str, chunk_index: int) -> bool:
-        """Return whether the current turn already contains the chunk index."""
+    def has_chunk(self, session_id: str, turn_index: int, chunk_index: int) -> bool:
+        turn = self.get_turn(session_id, turn_index)
+        return any(chunk["chunk_index"] == chunk_index for chunk in turn["chunks"])
 
-        state = self.get_state(session_id)
-        current = state.get("current_turn")
-        if current is None:
-            raise RuntimeError("No active turn.")
-        return any(chunk["chunk_index"] == chunk_index for chunk in current["chunks"])
-
-    def get_chunk(self, session_id: str, chunk_index: int) -> ChunkRecord:
-        """Retrieve a specific chunk from the current turn."""
-
-        state = self.get_state(session_id)
-        current = state.get("current_turn")
-        if current is None:
-            raise RuntimeError("No active turn.")
-        for chunk in current["chunks"]:
+    def get_chunk(self, session_id: str, turn_index: int, chunk_index: int) -> ChunkRecord:
+        turn = self.get_turn(session_id, turn_index)
+        for chunk in turn["chunks"]:
             if chunk["chunk_index"] == chunk_index:
                 return chunk
-        raise RuntimeError(f"Chunk {chunk_index} not found in current turn.")
+        raise RuntimeError(f"Chunk {chunk_index} not found in turn {turn_index}.")
 
-    def update_chunk(self, session_id: str, chunk_index: int, updates: dict[str, Any]) -> None:
-        """Merge updates into an existing chunk record."""
-
-        chunk = self.get_chunk(session_id, chunk_index)
+    def update_chunk(
+        self,
+        session_id: str,
+        turn_index: int,
+        chunk_index: int,
+        updates: dict[str, Any],
+    ) -> None:
+        chunk = self.get_chunk(session_id, turn_index, chunk_index)
         chunk.update(updates)  # type: ignore[typeddict-item]
         self.persist_state(session_id)
 
-    def get_sorted_chunks(self, session_id: str) -> list[ChunkRecord]:
-        """Return current-turn chunks ordered by start timestamp."""
+    def get_sorted_chunks(self, session_id: str, turn_index: int) -> list[ChunkRecord]:
+        turn = self.get_turn(session_id, turn_index)
+        return sorted(turn["chunks"], key=lambda chunk: (chunk["start_ms"], chunk["chunk_index"]))
 
-        state = self.get_state(session_id)
-        current = state.get("current_turn")
-        if current is None:
-            raise RuntimeError("No active turn.")
-        return sorted(current["chunks"], key=lambda chunk: (chunk["start_ms"], chunk["chunk_index"]))
-
-    def set_recording_window(self, session_id: str, start_ms: int, end_ms: int) -> None:
-        """Persist the inferred recording window on the current turn."""
-
-        state = self.get_state(session_id)
-        current = state.get("current_turn")
-        if current is None:
-            raise RuntimeError("No active turn.")
-        current["recording_start_ms"] = start_ms
-        current["recording_end_ms"] = end_ms
+    def set_recording_window(self, session_id: str, turn_index: int, start_ms: int, end_ms: int) -> None:
+        turn = self.get_turn(session_id, turn_index)
+        turn["recording_start_ms"] = start_ms
+        turn["recording_end_ms"] = end_ms
         self.persist_state(session_id)
 
     def validate_turn_chunks(
         self,
         session_id: str,
         *,
+        turn_index: int,
         min_seconds: int,
         max_seconds: int,
     ) -> tuple[bool, str | None, dict[str, int] | None]:
-        """Validate the current turn's chunk coverage and inferred duration."""
-
-        chunks = self.get_sorted_chunks(session_id)
+        chunks = self.get_sorted_chunks(session_id, turn_index)
         if not chunks:
             return False, "The recording was empty. Check camera and microphone access.", None
 
@@ -159,33 +180,14 @@ class PhaseBSessionManager:
             end_ms = chunk["end_ms"]
 
             if chunk_index in seen_indexes:
-                return (
-                    False,
-                    "Some recording chunks were duplicated. Please record that turn again.",
-                    None,
-                )
+                return False, "Some recording chunks were duplicated. Please record that turn again.", None
             seen_indexes.add(chunk_index)
 
             if chunk_index < 0 or start_ms < 0 or end_ms <= start_ms:
-                return (
-                    False,
-                    "Some recording chunks were invalid. Please record that turn again.",
-                    None,
-                )
+                return False, "Some recording chunks were invalid. Please record that turn again.", None
 
-            if previous_end_ms is not None:
-                if start_ms < previous_end_ms:
-                    return (
-                        False,
-                        "Some recording chunks were missing or overlapped. Please record that turn again.",
-                        None,
-                    )
-                if start_ms > previous_end_ms:
-                    return (
-                        False,
-                        "Some recording chunks were missing or overlapped. Please record that turn again.",
-                        None,
-                    )
+            if previous_end_ms is not None and start_ms != previous_end_ms:
+                return False, "Some recording chunks were missing or overlapped. Please record that turn again.", None
             previous_end_ms = end_ms
 
         recording_start_ms = chunks[0]["start_ms"]
@@ -205,56 +207,71 @@ class PhaseBSessionManager:
     def store_transcript(
         self,
         session_id: str,
+        turn_index: int,
         transcript: str,
         words: list[dict[str, Any]],
     ) -> None:
-        """Store STT results on the current turn."""
-
-        state = self.get_state(session_id)
-        current = state.get("current_turn")
-        if current is None:
-            raise RuntimeError("No active turn.")
-        current["transcript"] = transcript
-        current["transcript_words"] = words
+        turn = self.get_turn(session_id, turn_index)
+        turn["transcript"] = transcript
+        turn["transcript_words"] = words
         self.persist_state(session_id)
 
-    def store_transcript_upload(self, session_id: str, upload_ref: dict[str, Any]) -> None:
-        """Store metadata for the full-turn audio upload used for STT."""
-
-        state = self.get_state(session_id)
-        current = state.get("current_turn")
-        if current is None:
-            raise RuntimeError("No active turn.")
-        current["transcript_audio_upload"] = upload_ref
+    def store_transcript_upload(
+        self,
+        session_id: str,
+        turn_index: int,
+        upload_ref: dict[str, Any],
+    ) -> None:
+        turn = self.get_turn(session_id, turn_index)
+        turn["transcript_audio_upload"] = upload_ref
         self.persist_state(session_id)
 
-    def finish_turn(self, session_id: str, critique: str, merged_summary: dict[str, Any]) -> None:
-        """Archive the current turn and advance the index."""
+    def store_turn_analysis(
+        self,
+        session_id: str,
+        turn_index: int,
+        *,
+        merged_summary: dict[str, Any],
+        turn_analysis: TurnAnalysis,
+        analysis_status: str,
+    ) -> None:
+        turn = self.get_turn(session_id, turn_index)
+        turn["merged_summary"] = merged_summary
+        turn["turn_analysis"] = turn_analysis
+        turn["analysis_status"] = analysis_status  # type: ignore[typeddict-item]
+        turn["critique"] = turn_analysis.get("summary")
+        self.persist_state(session_id)
 
+    def finish_turn(self, session_id: str, turn_index: int) -> TurnState:
         state = self.get_state(session_id)
         current = state.get("current_turn")
-        if current is None:
+        if current is None or current["turn_index"] != turn_index:
             raise RuntimeError("No active turn to finish.")
 
-        current["critique"] = critique
-        current["merged_summary"] = merged_summary
         state["conversation_history"].append({"role": "user", "content": current["transcript"] or ""})
         state["turns"].append(current)
         state["current_turn"] = None
         state["turn_index"] += 1
         self.persist_state(session_id)
+        return current
+
+    def store_momentum_decision(self, session_id: str, decision: MomentumDecision | None) -> None:
+        state = self.get_state(session_id)
+        state["momentum_decision"] = decision
+        self.persist_state(session_id)
+
+    def store_final_report(self, session_id: str, report: FinalReport) -> None:
+        state = self.get_state(session_id)
+        state["final_report"] = report
+        self.persist_state(session_id)
 
     def end_session(self, session_id: str) -> PhaseBState:
-        """Mark the session as complete and return final state."""
-
         state = self.get_state(session_id)
         state["status"] = "complete"
         self.persist_state(session_id)
         return state
 
     def persist_state(self, session_id: str) -> None:
-        """Persist the serializable Phase B state in the background."""
-
         state = self.get_state(session_id)
         schedule_repository_write(
             get_session_repository().update_phase_b_state(
@@ -264,7 +281,7 @@ class PhaseBSessionManager:
         )
 
     # ------------------------------------------------------------------
-    # WebSocket binding  (mirrors Phase A pattern)
+    # WebSocket binding
     # ------------------------------------------------------------------
 
     async def bind_websocket(self, session_id: str, websocket: WebSocket) -> None:
