@@ -22,6 +22,7 @@ class ActiveSession:
     pending_events: list[dict[str, Any]] = field(default_factory=list)
     recording_future: asyncio.Future[tuple[dict[str, Any], dict[str, Any]]] | None = None
     continue_future: asyncio.Future[bool] | None = None
+    queued_continue_decision: bool | None = None
     task: asyncio.Task | None = None
     latest_state: dict[str, Any] = field(default_factory=dict)
     rounds: list[RoundSummary] = field(default_factory=list)
@@ -99,14 +100,24 @@ class PhaseASessionManager:
 
     async def wait_for_continue(self, session_id: str) -> bool:
         session = self.get_session(session_id)
+        if session.queued_continue_decision is not None:
+            queued_decision = session.queued_continue_decision
+            session.queued_continue_decision = None
+            return queued_decision
         loop = asyncio.get_running_loop()
         session.continue_future = loop.create_future()
-        return await session.continue_future
+        try:
+            return await session.continue_future
+        finally:
+            session.continue_future = None
 
     def submit_continue(self, session_id: str, continue_session: bool) -> None:
         session = self.get_session(session_id)
         if session.continue_future is None:
-            raise RuntimeError("The session is not waiting for a continue decision.")
+            if session.queued_continue_decision is not None:
+                raise RuntimeError("The continue decision has already been submitted.")
+            session.queued_continue_decision = continue_session
+            return
         if session.continue_future.done():
             raise RuntimeError("The continue decision has already been submitted.")
         session.continue_future.set_result(continue_session)
@@ -133,6 +144,8 @@ class PhaseASessionManager:
             match_score=float(state.get("match_score") or 0),
             filler_words_found=list(merged_analysis.get("filler_words_found") or []),
             filler_word_count=int(merged_analysis.get("filler_word_count") or 0),
+            derived_metrics=dict(merged_analysis.get("derived_metrics") or {}),
+            display_metrics=list(merged_analysis.get("display_metrics") or []),
         )
         session = self.get_session(session_id)
         round_index = len(session.rounds)

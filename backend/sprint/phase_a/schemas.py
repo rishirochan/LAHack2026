@@ -52,6 +52,16 @@ class ContinueSessionResponse(BaseModel):
     continue_session: bool
 
 
+class DisplayMetric(BaseModel):
+    """Compact deterministic metric rendered directly in the UI."""
+
+    key: str
+    label: str
+    value: float | int | str | None = None
+    display_value: str
+    description: str
+
+
 class RoundSummary(BaseModel):
     """Summary data kept in memory for one completed round."""
 
@@ -60,6 +70,8 @@ class RoundSummary(BaseModel):
     match_score: float
     filler_words_found: list[str]
     filler_word_count: int
+    derived_metrics: dict[str, Any] = Field(default_factory=dict)
+    display_metrics: list[DisplayMetric] = Field(default_factory=list)
 
 
 class SessionSummaryResponse(BaseModel):
