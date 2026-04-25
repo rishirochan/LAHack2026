@@ -1,26 +1,28 @@
 """LangGraph workflow for Phase A emotion drills."""
 
 import asyncio
-from typing import Any, NotRequired, TypedDict
+import logging
+from typing import Any, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from backend.shared.ai import get_ai_service, get_settings
 from backend.shared.db import get_session_repository
-from backend.sprint.phase_a.elevenlabs import stream_tts_chunks, transcribe_audio as transcribe_elevenlabs
-from backend.sprint.phase_a.gemma import generate_coach_critique, generate_scenario_prompt
-from backend.sprint.phase_a.imentiv import (
+from .elevenlabs import stream_tts_chunks, transcribe_audio as transcribe_elevenlabs
+from .gemma import generate_coach_critique, generate_scenario_prompt
+from .imentiv import (
     get_audio_emotions,
     get_video_emotions,
     upload_audio,
     upload_video,
 )
-from backend.sprint.phase_a.session_manager import get_session_manager
+from .session_manager import get_session_manager
 
 
 FILLER_WORDS = {"um", "uh", "like", "you know", "basically", "literally", "so", "right"}
 MATCH_WINDOW_MS = 1000
+logger = logging.getLogger(__name__)
 
 
 class PhaseAState(TypedDict):
@@ -44,7 +46,7 @@ class PhaseAState(TypedDict):
     critique: str | None
     match_score: float
     continue_session: bool
-    error: NotRequired[str | None]
+    error: str | None
 
 
 def build_initial_state(theme: str, target_emotion: str, difficulty: int) -> PhaseAState:
@@ -84,6 +86,11 @@ async def generate_scenario(state: PhaseAState, config: RunnableConfig) -> dict[
         await _send_event(config, "scenario", {"scenario_prompt": scenario_prompt})
         return {"scenario_prompt": scenario_prompt, "error": None}
     except Exception as error:
+        logger.exception(
+            "Failed to generate Phase A scenario for theme=%s target_emotion=%s.",
+            state["theme"],
+            state["target_emotion"],
+        )
         return {"error": f"Could not generate a scenario: {error}"}
 
 
@@ -92,6 +99,7 @@ async def speak_scenario(state: PhaseAState, config: RunnableConfig) -> dict[str
         await _stream_tts(config, "scenario", state["scenario_prompt"] or "")
         return {}
     except Exception as error:
+        logger.exception("Failed to stream Phase A scenario TTS.")
         return {"error": f"Could not speak the scenario: {error}"}
 
 
@@ -199,6 +207,7 @@ async def generate_critique(state: PhaseAState, config: RunnableConfig) -> dict[
         )
         return {"critique": critique, "error": None}
     except Exception as error:
+        logger.exception("Failed to generate Phase A critique.")
         return {"error": f"Could not generate critique: {error}"}
 
 
@@ -210,6 +219,7 @@ async def speak_critique(state: PhaseAState, config: RunnableConfig) -> dict[str
         get_session_manager().add_round(_session_id(config), {**state, "previous_critiques": previous_critiques})
         return {"previous_critiques": previous_critiques, "error": None}
     except Exception as error:
+        logger.exception("Failed to stream Phase A critique TTS.")
         return {"error": f"Could not speak critique: {error}"}
 
 
@@ -300,8 +310,16 @@ def compile_phase_a_graph():
     graph.add_node("handle_error", handle_error)
 
     graph.set_entry_point("generate_scenario")
-    graph.add_edge("generate_scenario", "speak_scenario")
-    graph.add_edge("speak_scenario", "await_recording")
+    graph.add_conditional_edges(
+        "generate_scenario",
+        _route_error,
+        {"error": "handle_error", "ok": "speak_scenario"},
+    )
+    graph.add_conditional_edges(
+        "speak_scenario",
+        _route_error,
+        {"error": "handle_error", "ok": "await_recording"},
+    )
     graph.add_edge("await_recording", "upload_to_imentiv")
     graph.add_conditional_edges(
         "upload_to_imentiv",
@@ -313,9 +331,21 @@ def compile_phase_a_graph():
         _route_error,
         {"error": "handle_error", "ok": "merge_and_correlate"},
     )
-    graph.add_edge("merge_and_correlate", "generate_critique")
-    graph.add_edge("generate_critique", "speak_critique")
-    graph.add_edge("speak_critique", "check_continue")
+    graph.add_conditional_edges(
+        "merge_and_correlate",
+        _route_error,
+        {"error": "handle_error", "ok": "generate_critique"},
+    )
+    graph.add_conditional_edges(
+        "generate_critique",
+        _route_error,
+        {"error": "handle_error", "ok": "speak_critique"},
+    )
+    graph.add_conditional_edges(
+        "speak_critique",
+        _route_error,
+        {"error": "handle_error", "ok": "check_continue"},
+    )
     graph.add_conditional_edges(
         "check_continue",
         _route_continue,
