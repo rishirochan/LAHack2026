@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Mic, RefreshCw, Square } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import {
   emotionOptions,
   type DisplayMetric,
@@ -183,7 +184,7 @@ export default function SprintPage() {
         </div>
 
         <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
-          <h2 className="mb-4 text-sm font-medium text-slate-700">Choose an emotion to practice</h2>
+          <h2 className="mb-4 text-lg font-bold text-slate-900">Choose an emotion to practice</h2>
           <div className="mb-8 flex flex-wrap gap-3">
             {emotionOptions.map((emotion) => (
               <button
@@ -322,55 +323,10 @@ export default function SprintPage() {
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[1fr_260px]">
-        <div className="flex min-h-[340px] flex-col items-center justify-center rounded-3xl border border-cream-200 bg-white p-8">
-          {status === 'processing' ? (
-            <ProcessingStages activeStage={processingStage} />
-          ) : (
-            <>
-              <button
-                type="button"
-                disabled={!canRecord}
-                onClick={toggleRecording}
-                className={`flex h-36 w-36 items-center justify-center rounded-full transition ${
-                  isRecording
-                    ? 'animate-pulse bg-red-500 text-white'
-                    : 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300'
-                }`}
-              >
-                {isRecording ? <Square className="h-10 w-10" /> : <Mic className="h-12 w-12" />}
-              </button>
-              <p className="mt-5 text-sm font-semibold text-slate-900">
-                {isRecording ? 'Recording...' : 'Click to start recording'}
-              </p>
-              <p className={`mt-2 text-sm ${secondsRemaining <= 5 ? 'text-red-500' : 'text-slate-500'}`}>
-                {isRecording ? `${secondsRemaining}s remaining` : 'You will have 20 seconds to answer.'}
-              </p>
-            </>
-          )}
-
-          {shownError && (
-            <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{shownError}</p>
-          )}
-        </div>
-
-        <div className="rounded-3xl border border-cream-200 bg-white p-4">
-          <p className="mb-3 text-sm font-semibold text-slate-900">Webcam preview</p>
-          <video
-            ref={previewRef}
-            autoPlay
-            muted
-            playsInline
-            className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
-          />
-        </div>
-      </section>
-
       {(status === 'critique' || roundResult) && (
         <section className="grid gap-6 lg:grid-cols-[1fr_280px]">
           <div className="rounded-3xl border border-cream-200 bg-white p-6">
-            <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-navy-500">Coach Critique</p>
-            <p className="text-lg leading-relaxed text-slate-700">{critique}</p>
+            <MarkdownCritique content={critique} />
             <div className="mt-6 flex flex-wrap gap-3">
               <button
                 onClick={() => {
@@ -380,7 +336,7 @@ export default function SprintPage() {
                 }}
                 className="rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
               >
-                Try Again
+                Next Exercise
               </button>
               <button
                 onClick={() => {
@@ -402,7 +358,76 @@ export default function SprintPage() {
           />
         </section>
       )}
+
+      {!(status === 'critique' || roundResult) && (
+        <section className="grid gap-6 lg:grid-cols-[1fr_260px]">
+          <div className="flex min-h-[340px] flex-col items-center justify-center rounded-3xl border border-cream-200 bg-white p-8">
+            {status === 'processing' ? (
+              <ProcessingStages activeStage={processingStage} />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={!canRecord}
+                  onClick={toggleRecording}
+                  className={`flex h-36 w-36 items-center justify-center rounded-full transition ${
+                    isRecording
+                      ? 'animate-pulse bg-red-500 text-white'
+                      : 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300'
+                  }`}
+                >
+                  {isRecording ? <Square className="h-10 w-10" /> : <Mic className="h-12 w-12" />}
+                </button>
+                <p className="mt-5 text-sm font-semibold text-slate-900">
+                  {isRecording ? 'Recording...' : 'Click to start recording'}
+                </p>
+                <p className={`mt-2 text-sm ${secondsRemaining <= 5 ? 'text-red-500' : 'text-slate-500'}`}>
+                  {isRecording ? `${secondsRemaining}s remaining` : 'You will have 20 seconds to answer.'}
+                </p>
+              </>
+            )}
+
+            {shownError && (
+              <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{shownError}</p>
+            )}
+          </div>
+
+          <div className="rounded-3xl border border-cream-200 bg-white p-4">
+            <p className="mb-3 text-sm font-semibold text-slate-900">Webcam preview</p>
+            <video
+              ref={previewRef}
+              autoPlay
+              muted
+              playsInline
+              className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
+            />
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function MarkdownCritique({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        h1: ({ children }) => <h1 className="mb-3 text-2xl font-semibold leading-snug text-slate-900">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-3 text-xl font-semibold leading-snug text-slate-900">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-3 text-lg font-semibold leading-snug text-slate-900">{children}</h3>,
+        p: ({ children }) => <p className="mb-3 text-lg leading-relaxed text-slate-700 last:mb-0">{children}</p>,
+        strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        ul: ({ children }) => <ul className="mb-3 list-disc space-y-2 pl-5 text-lg leading-relaxed text-slate-700">{children}</ul>,
+        ol: ({ children }) => <ol className="mb-3 list-decimal space-y-2 pl-5 text-lg leading-relaxed text-slate-700">{children}</ol>,
+        li: ({ children }) => <li>{children}</li>,
+        code: ({ children }) => (
+          <code className="rounded-md bg-cream-100 px-1.5 py-0.5 text-base text-slate-800">{children}</code>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
   );
 }
 
