@@ -25,7 +25,7 @@ export default function ConversationPage() {
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const videoRecorderRef = useRef<MediaRecorder | null>(null);
-  const wavAudioRecorderRef = useRef<WavAudioRecorder | null>(null);
+  const audioCaptureRef = useRef<TurnAudioCapture | null>(null);
   const videoChunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef<number>(0);
   const timerRef = useRef<number | null>(null);
@@ -90,7 +90,7 @@ export default function ConversationPage() {
       const videoRecorder = new MediaRecorder(stream, {
         mimeType: getSupportedMimeType(['video/webm;codecs=vp8,opus', 'video/webm']),
       });
-      const wavAudioRecorder = createWavAudioRecorder(stream);
+      const audioCapture = createTurnAudioCapture(stream);
 
       videoRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -99,12 +99,12 @@ export default function ConversationPage() {
       };
 
       videoRecorderRef.current = videoRecorder;
-      wavAudioRecorderRef.current = wavAudioRecorder;
+      audioCaptureRef.current = audioCapture;
       startedAtRef.current = window.performance.now();
       setSecondsRemaining(maxRecordingSeconds);
       setIsRecording(true);
       videoRecorder.start();
-      wavAudioRecorder.start();
+      audioCapture.start();
       startCountdown();
     } catch {
       setLocalError('Camera or microphone access was blocked. Allow access and try again.');
@@ -118,21 +118,31 @@ export default function ConversationPage() {
     const durationSeconds = durationMs / 1000;
 
     if (durationSeconds < MIN_RECORDING_SECONDS) {
-      stopRecordersWithoutUpload(videoRecorderRef.current, wavAudioRecorderRef.current);
+      stopRecordersWithoutUpload(videoRecorderRef.current, audioCaptureRef.current);
+      videoRecorderRef.current = null;
+      audioCaptureRef.current = null;
+      videoChunksRef.current = [];
       setLocalError('That recording was too short. Try again with a full response.');
       return;
     }
 
-    const [videoBlob, audioBlob] = await Promise.all([
+    const [videoBlob, audioResult] = await Promise.all([
       stopRecorder(videoRecorderRef.current, videoChunksRef.current, 'video/webm'),
-      stopWavAudioRecorder(wavAudioRecorderRef.current),
+      stopAudioCapture(audioCaptureRef.current),
     ]);
 
-    wavAudioRecorderRef.current = null;
+    videoRecorderRef.current = null;
+    audioCaptureRef.current = null;
+    videoChunksRef.current = [];
     try {
-      await submitTurn(videoBlob, audioBlob, durationMs);
-    } catch {
-      setLocalError('Could not submit that turn. Please try again.');
+      await submitTurn(
+        videoBlob,
+        audioResult.primaryBlob,
+        durationMs,
+        audioResult.fallbackTranscriptBlob,
+      );
+    } catch (error) {
+      setLocalError(getErrorMessage(error, 'Could not submit that turn. Please try again.'));
     }
   }
 
@@ -194,7 +204,7 @@ export default function ConversationPage() {
   useEffect(() => {
     return () => {
       stopTimer();
-      wavAudioRecorderRef.current?.discard();
+      audioCaptureRef.current?.discard();
       stopTracks();
     };
   }, []);
@@ -597,17 +607,20 @@ function BulletList({ title, items }: { title: string; items: string[] }) {
 }
 
 function getSupportedMimeType(candidates: string[]) {
+  if (typeof MediaRecorder === 'undefined') {
+    return '';
+  }
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
 }
 
 function stopRecordersWithoutUpload(
   videoRecorder: MediaRecorder | null,
-  audioRecorder: WavAudioRecorder | null,
+  audioCapture: TurnAudioCapture | null,
 ) {
   if (videoRecorder?.state === 'recording') {
     videoRecorder.stop();
   }
-  audioRecorder?.discard();
+  audioCapture?.discard();
 }
 
 function stopRecorder(recorder: MediaRecorder | null, chunks: Blob[], fallbackType: string) {
@@ -629,11 +642,105 @@ function stopRecorder(recorder: MediaRecorder | null, chunks: Blob[], fallbackTy
   });
 }
 
+type TurnAudioRecorder = {
+  mode: 'webm' | 'wav';
+  start: () => void;
+  stop: () => Promise<Blob>;
+  discard: () => void;
+};
+
+type TurnAudioCapture = {
+  start: () => void;
+  stop: () => Promise<{ primaryBlob: Blob; fallbackTranscriptBlob: Blob | null }>;
+  discard: () => void;
+};
+
 type WavAudioRecorder = {
   start: () => void;
   stop: () => Promise<Blob>;
   discard: () => void;
 };
+
+function createTurnAudioRecorder(stream: MediaStream): TurnAudioRecorder {
+  const audioMimeType = getSupportedMimeType(['audio/webm;codecs=opus', 'audio/webm']);
+  if (audioMimeType) {
+    try {
+      return createWebmAudioRecorder(stream, audioMimeType);
+    } catch {
+      return createWavFallbackRecorder(stream);
+    }
+  }
+  return createWavFallbackRecorder(stream);
+}
+
+function createTurnAudioCapture(stream: MediaStream): TurnAudioCapture {
+  const primaryRecorder = createTurnAudioRecorder(stream);
+  const fallbackRecorder =
+    primaryRecorder.mode === 'webm' ? createWavAudioRecorder(stream) : null;
+
+  return {
+    start: () => {
+      primaryRecorder.start();
+      fallbackRecorder?.start();
+    },
+    stop: async () => {
+      const [primaryBlob, fallbackTranscriptBlob] = await Promise.all([
+        primaryRecorder.stop(),
+        fallbackRecorder ? fallbackRecorder.stop() : Promise.resolve(null),
+      ]);
+      return { primaryBlob, fallbackTranscriptBlob };
+    },
+    discard: () => {
+      primaryRecorder.discard();
+      fallbackRecorder?.discard();
+    },
+  };
+}
+
+function createWebmAudioRecorder(stream: MediaStream, mimeType: string): TurnAudioRecorder {
+  const audioChunks: Blob[] = [];
+  const recorder = new MediaRecorder(new MediaStream(stream.getAudioTracks()), {
+    mimeType,
+  });
+
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) {
+      audioChunks.push(event.data);
+    }
+  };
+
+  return {
+    mode: 'webm',
+    start: () => recorder.start(),
+    stop: () =>
+      new Promise<Blob>((resolve) => {
+        recorder.onstop = () => {
+          resolve(new Blob(audioChunks, { type: 'audio/webm' }));
+        };
+
+        if (recorder.state === 'recording') {
+          recorder.stop();
+        } else {
+          resolve(new Blob(audioChunks, { type: 'audio/webm' }));
+        }
+      }),
+    discard: () => {
+      if (recorder.state === 'recording') {
+        recorder.stop();
+      }
+    },
+  };
+}
+
+function createWavFallbackRecorder(stream: MediaStream): TurnAudioRecorder {
+  const recorder = createWavAudioRecorder(stream);
+  return {
+    mode: 'wav',
+    start: recorder.start,
+    stop: recorder.stop,
+    discard: recorder.discard,
+  };
+}
 
 function createWavAudioRecorder(stream: MediaStream): WavAudioRecorder {
   const AudioContextCtor =
@@ -688,11 +795,14 @@ function createWavAudioRecorder(stream: MediaStream): WavAudioRecorder {
   };
 }
 
-async function stopWavAudioRecorder(recorder: WavAudioRecorder | null) {
-  if (!recorder) {
-    return new Blob([], { type: 'audio/wav' });
+async function stopAudioCapture(capture: TurnAudioCapture | null) {
+  if (!capture) {
+    return {
+      primaryBlob: new Blob([], { type: 'audio/webm' }),
+      fallbackTranscriptBlob: null,
+    };
   }
-  return recorder.stop();
+  return capture.stop();
 }
 
 function disconnectAudioNodes(
@@ -760,6 +870,16 @@ function writeAscii(view: DataView, offset: number, text: string) {
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return fallback;
+    }
   }
   return fallback;
 }

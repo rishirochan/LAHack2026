@@ -39,6 +39,7 @@ next-env.d.ts
 # Editor / IDE files
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 

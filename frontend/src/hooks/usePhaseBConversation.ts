@@ -145,7 +145,12 @@ export function usePhaseBConversation() {
     await refreshSession(activeSessionId);
   }
 
-  async function submitTurn(videoBlob: Blob, audioBlob: Blob, durationMs: number) {
+  async function submitTurn(
+    videoBlob: Blob,
+    audioBlob: Blob,
+    durationMs: number,
+    fallbackTranscriptAudioBlob?: Blob | null,
+  ) {
     if (!sessionId || currentTurn == null) {
       throw new Error('No active turn.');
     }
@@ -161,7 +166,7 @@ export function usePhaseBConversation() {
     uploadChunkFormData.append('audio_file', audioBlob, getAudioFilename(audioBlob));
     uploadChunkFormData.append('chunk_index', '0');
     uploadChunkFormData.append('start_ms', '0');
-    uploadChunkFormData.append('end_ms', String(Math.max(durationMs, 0)));
+    uploadChunkFormData.append('end_ms', String(Math.max(Math.round(durationMs), 0)));
     uploadChunkFormData.append('mediapipe_metrics', '{}');
 
     const chunkResponse = await fetch(
@@ -178,19 +183,27 @@ export function usePhaseBConversation() {
     }
 
     setProcessingStage('Transcribing your response');
-    const transcriptFormData = new FormData();
-    transcriptFormData.append('audio_file', audioBlob, getAudioFilename(audioBlob));
-    const transcriptResponse = await fetch(
-      `${API_URL}/api/phase-b/sessions/${sessionId}/turns/${turnIndex}/transcribe`,
-      {
-        method: 'POST',
-        body: transcriptFormData,
-      },
-    );
+    const primaryTranscriptError = await tryTranscribeTurn(sessionId, turnIndex, audioBlob);
+    if (primaryTranscriptError) {
+      const canRetryWithFallback =
+        fallbackTranscriptAudioBlob != null &&
+        fallbackTranscriptAudioBlob.size > 0 &&
+        fallbackTranscriptAudioBlob.type === 'audio/wav' &&
+        audioBlob.type !== 'audio/wav';
 
-    if (!transcriptResponse.ok) {
-      const detail = await safeDetail(transcriptResponse);
-      throw new Error(detail || 'Could not transcribe the turn.');
+      if (!canRetryWithFallback) {
+        throw new Error(primaryTranscriptError);
+      }
+
+      setProcessingStage('Retrying transcription');
+      const fallbackTranscriptError = await tryTranscribeTurn(
+        sessionId,
+        turnIndex,
+        fallbackTranscriptAudioBlob,
+      );
+      if (fallbackTranscriptError) {
+        throw new Error(fallbackTranscriptError);
+      }
     }
 
     setProcessingStage('Generating the next step');
@@ -461,13 +474,67 @@ export function usePhaseBConversation() {
   };
 }
 
+async function tryTranscribeTurn(sessionId: string, turnIndex: number, audioBlob: Blob) {
+  const transcriptFormData = new FormData();
+  transcriptFormData.append('audio_file', audioBlob, getAudioFilename(audioBlob));
+  const transcriptResponse = await fetch(
+    `${API_URL}/api/phase-b/sessions/${sessionId}/turns/${turnIndex}/transcribe`,
+    {
+      method: 'POST',
+      body: transcriptFormData,
+    },
+  );
+
+  if (transcriptResponse.ok) {
+    return '';
+  }
+
+  const detail = await safeDetail(transcriptResponse);
+  return detail || 'Could not transcribe the turn.';
+}
+
 async function safeDetail(response: Response) {
   try {
-    const data = (await response.json()) as { detail?: string };
-    return data.detail ?? '';
+    const data = (await response.json()) as { detail?: unknown };
+    return normalizeDetail(data.detail);
   } catch {
     return '';
   }
+}
+
+function normalizeDetail(detail: unknown): string {
+  if (typeof detail === 'string') {
+    return detail;
+  }
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => normalizeDetail(item))
+      .filter(Boolean)
+      .join('; ');
+  }
+
+  if (detail && typeof detail === 'object') {
+    const maybeMessage =
+      ('message' in detail && normalizeDetail(detail.message)) ||
+      ('detail' in detail && normalizeDetail(detail.detail)) ||
+      ('msg' in detail && normalizeDetail(detail.msg));
+    if (maybeMessage) {
+      return maybeMessage;
+    }
+
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+
+  if (detail == null) {
+    return '';
+  }
+
+  return String(detail);
 }
 
 function base64ChunksToBlob(chunks: string[], mimeType: string) {
