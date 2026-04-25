@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LA Hacks 2026",
-  description: "Frontend application",
+  title: "VoxCoach - AI Communication Coach",
+  description: "Master your communication with AI-powered analysis of body language, tone, and expression.",
 };
 
 export default function RootLayout({
