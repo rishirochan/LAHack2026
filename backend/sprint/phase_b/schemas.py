@@ -53,6 +53,8 @@ class ChunkRecord(TypedDict):
     video_emotions: list[dict[str, Any]] | None
     audio_emotions: list[dict[str, Any]] | None
     status: ChunkStatus
+    video_upload: NotRequired[dict[str, Any] | None]
+    audio_upload: NotRequired[dict[str, Any] | None]
 
 
 class TurnState(TypedDict):
@@ -65,6 +67,7 @@ class TurnState(TypedDict):
     chunks: list[ChunkRecord]
     transcript: str | None
     transcript_words: list[dict[str, Any]] | None
+    transcript_audio_upload: dict[str, Any] | None
     merged_summary: dict[str, Any] | None
     critique: str | None
 
@@ -118,6 +121,7 @@ def build_turn_state(turn_index: int, prompt_text: str) -> TurnState:
         "chunks": [],
         "transcript": None,
         "transcript_words": None,
+        "transcript_audio_upload": None,
         "merged_summary": None,
         "critique": None,
     }

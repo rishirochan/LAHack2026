@@ -14,17 +14,17 @@ logger = logging.getLogger(__name__)
 async def generate_scenario_prompt(
     *,
     settings: AISettings,
-    theme: str,
     target_emotion: str,
     previous_critiques: list[str],
 ) -> str:
     """Ask Gemma for a short speaking scenario."""
 
     prompt = (
-        "Generate exactly 2 sentences describing a realistic speaking scenario. "
-        f"The theme is {theme}. The user should naturally practice sounding "
-        f"{target_emotion}. Avoid repeating issues from these previous critiques: "
-        f"{json.dumps(previous_critiques)}. Return only the scenario text."
+        "Generate exactly 2 sentences for the user to say thatgives them a natural opportunity to "
+        f"practice expressing {target_emotion}. The prompt should encourage that "
+        "emotion clearly without mentioning analysis, coaching, or acting drills. "
+        f"Avoid repeating issues from these previous critiques: {json.dumps(previous_critiques)}. "
+        "Return only the prompt text."
     )
     return await _generate_text(settings=settings, prompt=prompt)
 
@@ -32,9 +32,7 @@ async def generate_scenario_prompt(
 async def generate_coach_critique(
     *,
     settings: AISettings,
-    theme: str,
     target_emotion: str,
-    difficulty: int,
     merged_analysis: dict,
     previous_critiques: list[str],
 ) -> str:
@@ -45,11 +43,10 @@ async def generate_coach_critique(
         "weaknesses and 1 specific strength in under 100 words because this will "
         "be spoken aloud. Reference timestamps and words from word_correlations "
         "where possible. Pay special attention to moments where face emotion and "
-        "voice emotion diverge. If one stream is missing, only critique streams "
-        "that have data.\n\n"
-        f"Theme: {theme}\n"
+        "voice emotion diverge. Focus on how well the user expressed the target "
+        "emotion and what they can do better next time. If one stream is missing, "
+        "only critique streams that have data.\n\n"
         f"Target emotion: {target_emotion}\n"
-        f"Difficulty from 1 to 10: {difficulty}\n"
         f"Previous critiques to avoid repeating: {json.dumps(previous_critiques)}\n"
         f"Merged analysis JSON: {json.dumps(merged_analysis, ensure_ascii=True)}"
     )

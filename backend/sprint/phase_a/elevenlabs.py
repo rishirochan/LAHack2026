@@ -1,37 +1,39 @@
-"""ElevenLabs helpers for TTS streaming and speech transcription."""
+"""ElevenLabs helpers for TTS and speech transcription."""
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
+from backend.shared.db import get_media_store
 from backend.shared.ai.service import AIServiceFacade
 
 
-async def stream_tts_chunks(
+async def synthesize_tts_audio(
     *,
     ai_service: AIServiceFacade,
     text: str,
-) -> AsyncIterator[str]:
-    """Yield base64-encoded audio chunks for websocket transport."""
+) -> str:
+    """Return a full base64-encoded TTS audio payload."""
 
-    chunks = await asyncio.to_thread(_collect_tts_chunks, ai_service, text)
-    for chunk in chunks:
-        yield base64.b64encode(chunk).decode("ascii")
+    audio = await asyncio.to_thread(_collect_tts_audio, ai_service, text)
+    return base64.b64encode(audio).decode("ascii")
 
 
 async def transcribe_audio(
     *,
     ai_service: AIServiceFacade,
-    audio_path: str,
+    audio_source: str | dict[str, Any],
 ) -> tuple[str, list[dict[str, Any]]]:
     """Transcribe audio with word-level timestamps."""
 
-    response = await asyncio.to_thread(_transcribe_audio_sync, ai_service, audio_path)
-    return _extract_transcript(response), _extract_words(response)
+    async with _materialized_audio_path(audio_source) as audio_path:
+        response = await asyncio.to_thread(_transcribe_audio_sync, ai_service, audio_path)
+        return _extract_transcript(response), _extract_words(response)
 
 
-def _collect_tts_chunks(ai_service: AIServiceFacade, text: str) -> list[bytes]:
+def _collect_tts_audio(ai_service: AIServiceFacade, text: str) -> bytes:
     client = ai_service.elevenlabs_client
     settings = ai_service.settings
 
@@ -51,7 +53,7 @@ def _collect_tts_chunks(ai_service: AIServiceFacade, text: str) -> list[bytes]:
     else:
         raise RuntimeError("ElevenLabs client does not expose a TTS streaming method.")
 
-    return [chunk for chunk in stream if isinstance(chunk, bytes)]
+    return b"".join(chunk for chunk in stream if isinstance(chunk, bytes))
 
 
 def _transcribe_audio_sync(ai_service: AIServiceFacade, audio_path: str) -> Any:
@@ -67,6 +69,31 @@ def _transcribe_audio_sync(ai_service: AIServiceFacade, audio_path: str) -> Any:
             model_id=settings.elevenlabs_stt_model,
             timestamps_granularity="word",
         )
+
+
+@asynccontextmanager
+async def _materialized_audio_path(audio_source: str | dict[str, Any]):
+    if isinstance(audio_source, str):
+        yield audio_source
+        return
+
+    if not isinstance(audio_source, dict):
+        raise RuntimeError("Audio upload metadata was missing.")
+
+    file_id = audio_source.get("file_id")
+    if not file_id:
+        raise RuntimeError("Audio file identifier was missing.")
+
+    async with get_media_store().materialize_temp_file(
+        file_id=str(file_id),
+        suffix=_upload_suffix(audio_source),
+    ) as audio_path:
+        yield audio_path
+
+
+def _upload_suffix(upload: dict[str, Any]) -> str:
+    filename = str(upload.get("filename") or upload.get("original_filename") or "")
+    return Path(filename).suffix or ".webm"
 
 
 def _extract_transcript(response: Any) -> str:

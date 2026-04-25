@@ -1,14 +1,16 @@
 """FastAPI app for sprint backend features."""
 
 import asyncio
-import tempfile
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from urllib.parse import quote
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-from backend.shared.db import close_database, get_session_repository, init_database
+from backend.shared.db import close_database, get_media_store, get_session_repository, init_database
 from backend.shared.db.repository import DEFAULT_USER_ID
 from backend.sprint.phase_a.graph import build_initial_state, phase_a_graph
 from backend.sprint.phase_a.schemas import (
@@ -45,6 +47,8 @@ PHASE_B_MAX_SECONDS = 45
 RETRY_TOO_SHORT_MESSAGE = "That recording was too short. Try again with a full response."
 RETRY_EMPTY_MESSAGE = "The recording was empty. Check camera and microphone access."
 RETRY_INVALID_CHUNKS_MESSAGE = "Some recording chunks were missing or overlapped. Please record that turn again."
+PHASE_A_MEDIA_KINDS = {"video", "audio"}
+PHASE_B_MEDIA_KINDS = {"video", "audio"}
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +106,7 @@ def _to_session_preview(session: dict) -> dict[str, object]:
     score = None
 
     if mode == "phase_a":
-        label = str(setup.get("theme") or "Emotion Drill")
+        label = str(setup.get("target_emotion") or "Emotion Drill")
         scores = summary.get("match_scores") if isinstance(summary, dict) else None
         if isinstance(scores, list) and scores:
             score = round(float(sum(scores) / len(scores)) * 100)
@@ -129,9 +133,7 @@ async def start_phase_a_session(request: StartSessionRequest) -> StartSessionRes
     """Start a background LangGraph run for a new Phase A session."""
 
     initial_state = build_initial_state(
-        theme=request.theme,
         target_emotion=request.target_emotion,
-        difficulty=request.difficulty,
     )
     session = get_session_manager().create_session(dict(initial_state))
     task = asyncio.create_task(_run_phase_a_graph(session.session_id, initial_state))
@@ -171,9 +173,16 @@ async def submit_phase_a_recording(
             )
             return {"status": "retry"}
 
-        video_path = await _save_upload(video_file, suffix=".webm")
-        audio_path = await _save_upload(audio_file, suffix=".webm")
-        if Path(video_path).stat().st_size == 0 or Path(audio_path).stat().st_size == 0:
+        round_index = get_session_manager().get_next_round_index(session_id)
+        video_upload = await _save_media_upload(
+            video_file,
+            storage_key=_phase_a_storage_key(session_id, round_index, "video", ".webm"),
+        )
+        audio_upload = await _save_media_upload(
+            audio_file,
+            storage_key=_phase_a_storage_key(session_id, round_index, "audio", ".webm"),
+        )
+        if int(video_upload.get("size_bytes") or 0) == 0 or int(audio_upload.get("size_bytes") or 0) == 0:
             await get_session_manager().send_event(
                 session_id,
                 "retry_recording",
@@ -181,7 +190,7 @@ async def submit_phase_a_recording(
             )
             return {"status": "retry"}
 
-        get_session_manager().submit_recording(session_id, video_path, audio_path)
+        get_session_manager().submit_recording(session_id, video_upload, audio_upload)
         return {"status": "accepted"}
     except RuntimeError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -220,11 +229,201 @@ async def get_phase_a_summary(session_id: str) -> SessionSummaryResponse:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-async def _save_upload(upload: UploadFile, suffix: str) -> str:
+@app.get("/api/phase-a/sessions/{session_id}/rounds/{round_index}/{media_kind}")
+async def download_phase_a_media(session_id: str, round_index: int, media_kind: str) -> StreamingResponse:
+    """Download one persisted Phase A recording artifact."""
+
+    if media_kind not in PHASE_A_MEDIA_KINDS:
+        raise HTTPException(status_code=404, detail="Phase A media type was not found.")
+    session = await get_session_repository().get_session(session_id)
+    media_ref = _find_phase_a_media_ref(session, round_index, media_kind)
+    return await _build_media_response(media_ref)
+
+
+async def _save_media_upload(
+    upload: UploadFile,
+    *,
+    storage_key: str,
+) -> dict[str, object]:
     data = await upload.read()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as output:
-        output.write(data)
-        return output.name
+    if not data:
+        return {
+            "file_id": None,
+            "storage_key": storage_key,
+            "filename": Path(storage_key).name,
+            "original_filename": upload.filename or Path(storage_key).name,
+            "mime_type": upload.content_type or "application/octet-stream",
+            "size_bytes": 0,
+            "uploaded_at": datetime.now(UTC).isoformat(),
+        }
+
+    stored_upload = await get_media_store().save_media(
+        data=data,
+        storage_key=storage_key,
+        original_filename=upload.filename or Path(storage_key).name,
+        mime_type=upload.content_type or "application/octet-stream",
+    )
+    return {
+        **stored_upload,
+        "download_url": None,
+    }
+
+
+def _phase_a_storage_key(session_id: str, round_index: int, media_kind: str, suffix: str) -> str:
+    return f"phase_a/{session_id}/round_{round_index}/{media_kind}{suffix}"
+
+
+def _phase_b_chunk_storage_key(
+    session_id: str,
+    turn_index: int,
+    chunk_index: int,
+    media_kind: str,
+    suffix: str,
+) -> str:
+    return f"phase_b/{session_id}/turn_{turn_index}/chunk_{chunk_index}_{media_kind}{suffix}"
+
+
+def _phase_b_transcript_storage_key(session_id: str, turn_index: int, suffix: str) -> str:
+    return f"phase_b/{session_id}/turn_{turn_index}/transcript_audio{suffix}"
+
+
+def _find_phase_a_media_ref(session: dict[str, object] | None, round_index: int, media_kind: str) -> dict[str, object]:
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    for media_ref in session.get("media_refs") or []:
+        if not isinstance(media_ref, dict):
+            continue
+        if _index_value(media_ref.get("round_index")) != round_index:
+            continue
+        if media_ref.get("kind") != media_kind:
+            continue
+        return media_ref
+    raise HTTPException(status_code=404, detail="Phase A media was not found.")
+
+
+def _find_phase_b_chunk_media_ref(
+    session: dict[str, object] | None,
+    turn_index: int,
+    chunk_index: int,
+    media_kind: str,
+) -> dict[str, object]:
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    expected_kind = f"{media_kind}_upload"
+    for media_ref in session.get("media_refs") or []:
+        if not isinstance(media_ref, dict):
+            continue
+        if _index_value(media_ref.get("turn_index")) != turn_index:
+            continue
+        if _index_value(media_ref.get("chunk_index")) != chunk_index:
+            continue
+        if media_ref.get("kind") != expected_kind:
+            continue
+        return media_ref
+    raise HTTPException(status_code=404, detail="Phase B chunk media was not found.")
+
+
+def _find_phase_b_transcript_media_ref(session: dict[str, object] | None, turn_index: int) -> dict[str, object]:
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    for media_ref in session.get("media_refs") or []:
+        if not isinstance(media_ref, dict):
+            continue
+        if _index_value(media_ref.get("turn_index")) != turn_index:
+            continue
+        if media_ref.get("kind") != "turn_transcript_audio":
+            continue
+        return media_ref
+    raise HTTPException(status_code=404, detail="Phase B transcript audio was not found.")
+
+
+async def _build_media_response(media_ref: dict[str, object]) -> StreamingResponse:
+    upload = media_ref.get("upload")
+    if not isinstance(upload, dict):
+        raise HTTPException(status_code=404, detail="Media upload metadata was not found.")
+    file_id = upload.get("file_id")
+    if not file_id:
+        raise HTTPException(status_code=404, detail="Media file identifier was not found.")
+    iterator = get_media_store().iter_media(file_id=str(file_id))
+    try:
+        first_chunk = await anext(iterator)
+    except StopAsyncIteration:
+        first_chunk = b""
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    async def stream_media():
+        if first_chunk:
+            yield first_chunk
+        async for chunk in iterator:
+            yield chunk
+
+    response = StreamingResponse(
+        stream_media(),
+        media_type=str(upload.get("mime_type") or "application/octet-stream"),
+    )
+    filename = str(upload.get("original_filename") or upload.get("filename") or "media.bin")
+    response.headers["Content-Disposition"] = f'attachment; filename="{quote(filename)}"'
+    return response
+
+
+def _public_phase_b_turn(session_id: str, turn: object) -> dict[str, object] | None:
+    if not isinstance(turn, dict):
+        return None
+
+    public_turn = dict(turn)
+    transcript_upload = turn.get("transcript_audio_upload")
+    if isinstance(transcript_upload, dict):
+        public_turn["transcript_audio_upload"] = _public_upload_ref(
+            upload=transcript_upload,
+            download_url=(
+                f"/api/phase-b/sessions/{session_id}/turns/{int(turn.get('turn_index') or 0)}/transcript-audio"
+            ),
+        )
+
+    public_chunks: list[dict[str, object]] = []
+    for chunk in turn.get("chunks") or []:
+        if not isinstance(chunk, dict):
+            continue
+        public_chunk = dict(chunk)
+        chunk_index = int(chunk.get("chunk_index") or 0)
+        for media_kind in PHASE_B_MEDIA_KINDS:
+            upload_key = f"{media_kind}_upload"
+            upload = chunk.get(upload_key)
+            if isinstance(upload, dict):
+                public_chunk[upload_key] = _public_upload_ref(
+                    upload=upload,
+                    download_url=(
+                        f"/api/phase-b/sessions/{session_id}/turns/{int(turn.get('turn_index') or 0)}"
+                        f"/chunks/{chunk_index}/{media_kind}"
+                    ),
+                )
+        public_chunks.append(public_chunk)
+    public_turn["chunks"] = public_chunks
+    return public_turn
+
+
+def _public_upload_ref(
+    *,
+    upload: dict[str, object],
+    download_url: str,
+) -> dict[str, object]:
+    return {
+        "file_id": upload.get("file_id"),
+        "storage_key": upload.get("storage_key"),
+        "filename": upload.get("filename"),
+        "original_filename": upload.get("original_filename"),
+        "mime_type": upload.get("mime_type"),
+        "size_bytes": upload.get("size_bytes"),
+        "uploaded_at": upload.get("uploaded_at"),
+        "download_url": download_url,
+    }
+
+
+def _index_value(value: object) -> int:
+    if value is None:
+        return -1
+    return int(value)
 
 
 async def _run_phase_a_graph(session_id: str, initial_state: dict) -> None:
@@ -275,8 +474,8 @@ async def get_phase_b_session(session_id: str) -> SessionStateResponse:
         turn_index=state["turn_index"],
         max_turns=state["max_turns"],
         conversation_history=state["conversation_history"],
-        current_turn=state.get("current_turn"),
-        turns=state["turns"],
+        current_turn=_public_phase_b_turn(session_id, state.get("current_turn")),
+        turns=[turn for turn in (_public_phase_b_turn(session_id, turn) for turn in state["turns"]) if turn],
         status=state["status"],
     )
 
@@ -383,9 +582,15 @@ async def phase_b_upload_chunk(
     if get_phase_b_manager().has_chunk(session_id, chunk_index):
         raise HTTPException(status_code=409, detail=f"Chunk {chunk_index} has already been uploaded.")
 
-    video_path = await _save_upload(video_file, suffix=".webm")
-    audio_path = await _save_upload(audio_file, suffix=".webm")
-    if Path(video_path).stat().st_size == 0 or Path(audio_path).stat().st_size == 0:
+    video_upload = await _save_media_upload(
+        video_file,
+        storage_key=_phase_b_chunk_storage_key(session_id, turn_index, chunk_index, "video", ".webm"),
+    )
+    audio_upload = await _save_media_upload(
+        audio_file,
+        storage_key=_phase_b_chunk_storage_key(session_id, turn_index, chunk_index, "audio", ".webm"),
+    )
+    if int(video_upload.get("size_bytes") or 0) == 0 or int(audio_upload.get("size_bytes") or 0) == 0:
         raise HTTPException(status_code=400, detail="Chunk uploads must contain non-empty audio and video.")
 
     try:
@@ -401,12 +606,14 @@ async def phase_b_upload_chunk(
         "video_emotions": None,
         "audio_emotions": None,
         "status": "pending",
+        "video_upload": video_upload,
+        "audio_upload": audio_upload,
     }
     get_phase_b_manager().add_chunk(session_id, chunk_record)
 
     # Launch background Imentiv processing
     asyncio.create_task(
-        _process_phase_b_chunk(session_id, chunk_index, video_path, audio_path)
+        _process_phase_b_chunk(session_id, chunk_index, video_upload, audio_upload)
     )
 
     return {"status": "accepted", "chunk_index": str(chunk_index)}
@@ -429,8 +636,11 @@ async def phase_b_transcribe(
     if current is None or current["turn_index"] != turn_index:
         raise HTTPException(status_code=409, detail="Turn index mismatch or no active turn.")
 
-    audio_path = await _save_upload(audio_file, suffix=".webm")
-    if Path(audio_path).stat().st_size == 0:
+    transcript_audio_upload = await _save_media_upload(
+        audio_file,
+        storage_key=_phase_b_transcript_storage_key(session_id, turn_index, ".webm"),
+    )
+    if int(transcript_audio_upload.get("size_bytes") or 0) == 0:
         await get_phase_b_manager().send_event(
             session_id,
             "retry_recording",
@@ -438,12 +648,14 @@ async def phase_b_transcribe(
         )
         raise HTTPException(status_code=409, detail=RETRY_EMPTY_MESSAGE)
 
+    get_phase_b_manager().store_transcript_upload(session_id, transcript_audio_upload)
+
     from backend.sprint.phase_b.elevenlabs import transcribe_audio
     from backend.shared.ai import get_ai_service
 
     transcript, words = await transcribe_audio(
         ai_service=get_ai_service(),
-        audio_path=audio_path,
+        audio_source=transcript_audio_upload,
     )
 
     get_phase_b_manager().store_transcript(session_id, transcript, words)
@@ -534,11 +746,36 @@ async def phase_b_end_session(session_id: str) -> dict[str, object]:
     }
 
 
+@app.get("/api/phase-b/sessions/{session_id}/turns/{turn_index}/chunks/{chunk_index}/{media_kind}")
+async def download_phase_b_chunk_media(
+    session_id: str,
+    turn_index: int,
+    chunk_index: int,
+    media_kind: str,
+) -> StreamingResponse:
+    """Download one persisted Phase B chunk media artifact."""
+
+    if media_kind not in PHASE_B_MEDIA_KINDS:
+        raise HTTPException(status_code=404, detail="Phase B media type was not found.")
+    session = await get_session_repository().get_session(session_id)
+    media_ref = _find_phase_b_chunk_media_ref(session, turn_index, chunk_index, media_kind)
+    return await _build_media_response(media_ref)
+
+
+@app.get("/api/phase-b/sessions/{session_id}/turns/{turn_index}/transcript-audio")
+async def download_phase_b_transcript_audio(session_id: str, turn_index: int) -> StreamingResponse:
+    """Download the full-turn transcript audio capture for Phase B."""
+
+    session = await get_session_repository().get_session(session_id)
+    media_ref = _find_phase_b_transcript_media_ref(session, turn_index)
+    return await _build_media_response(media_ref)
+
+
 async def _process_phase_b_chunk(
     session_id: str,
     chunk_index: int,
-    video_path: str,
-    audio_path: str,
+    video_upload: dict[str, object],
+    audio_upload: dict[str, object],
 ) -> None:
     """Background task: upload to Imentiv, poll for results, update chunk."""
 
@@ -556,8 +793,8 @@ async def _process_phase_b_chunk(
     try:
         manager.update_chunk(session_id, chunk_index, {"status": "processing"})
         video_id, audio_id = await asyncio.gather(
-            upload_video(settings, video_path),
-            upload_audio(settings, audio_path),
+            upload_video(settings, video_upload),
+            upload_audio(settings, audio_upload),
         )
 
         video_emotions, audio_emotions = await asyncio.gather(

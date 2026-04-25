@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 
 from backend.shared.ai import get_ai_service, get_settings
 from backend.shared.db import get_session_repository
-from .elevenlabs import stream_tts_chunks, transcribe_audio as transcribe_elevenlabs
+from .elevenlabs import synthesize_tts_audio, transcribe_audio as transcribe_elevenlabs
 from .gemma import generate_coach_critique, generate_scenario_prompt
 from .imentiv import (
     get_audio_emotions,
@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 class PhaseAState(TypedDict):
     """State carried through the Phase A LangGraph workflow."""
 
-    theme: str
     target_emotion: str
-    difficulty: int
     previous_critiques: list[str]
     scenario_prompt: str | None
     video_path: str | None
     audio_path: str | None
+    video_upload: dict[str, Any] | None
+    audio_upload: dict[str, Any] | None
     video_id: str | None
     audio_id: str | None
     video_emotions: list[dict[str, Any]]
@@ -49,17 +49,17 @@ class PhaseAState(TypedDict):
     error: str | None
 
 
-def build_initial_state(theme: str, target_emotion: str, difficulty: int) -> PhaseAState:
+def build_initial_state(target_emotion: str) -> PhaseAState:
     """Create the nullable/default state for a new Phase A session."""
 
     return {
-        "theme": theme,
         "target_emotion": target_emotion,
-        "difficulty": difficulty,
         "previous_critiques": [],
         "scenario_prompt": None,
         "video_path": None,
         "audio_path": None,
+        "video_upload": None,
+        "audio_upload": None,
         "video_id": None,
         "audio_id": None,
         "video_emotions": [],
@@ -79,7 +79,6 @@ async def generate_scenario(state: PhaseAState, config: RunnableConfig) -> dict[
     try:
         scenario_prompt = await generate_scenario_prompt(
             settings=get_settings(),
-            theme=state["theme"],
             target_emotion=state["target_emotion"],
             previous_critiques=state["previous_critiques"],
         )
@@ -87,8 +86,7 @@ async def generate_scenario(state: PhaseAState, config: RunnableConfig) -> dict[
         return {"scenario_prompt": scenario_prompt, "error": None}
     except Exception as error:
         logger.exception(
-            "Failed to generate Phase A scenario for theme=%s target_emotion=%s.",
-            state["theme"],
+            "Failed to generate Phase A scenario for target_emotion=%s.",
             state["target_emotion"],
         )
         return {"error": f"Could not generate a scenario: {error}"}
@@ -106,20 +104,26 @@ async def speak_scenario(state: PhaseAState, config: RunnableConfig) -> dict[str
 async def await_recording(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
     try:
         await _send_event(config, "recording_ready", {"max_seconds": 20})
-        video_path, audio_path = await get_session_manager().wait_for_recording(_session_id(config))
-        return {"video_path": video_path, "audio_path": audio_path, "error": None}
+        video_upload, audio_upload = await get_session_manager().wait_for_recording(_session_id(config))
+        return {
+            "video_path": None,
+            "audio_path": None,
+            "video_upload": video_upload,
+            "audio_upload": audio_upload,
+            "error": None,
+        }
     except Exception as error:
         return {"error": f"Could not receive the recording: {error}"}
 
 
 async def upload_to_imentiv(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
     try:
-        if not state["video_path"] or not state["audio_path"]:
+        if not state["video_upload"] or not state["audio_upload"]:
             raise RuntimeError("Recording files were missing.")
 
         await _send_event(config, "processing_stage", {"stage": "Uploading recording"})
-        video_task = upload_video(get_settings(), state["video_path"])
-        audio_task = upload_audio(get_settings(), state["audio_path"])
+        video_task = upload_video(get_settings(), state["video_upload"])
+        audio_task = upload_audio(get_settings(), state["audio_upload"])
         video_id, audio_id = await asyncio.gather(video_task, audio_task)
         return {"video_id": video_id, "audio_id": audio_id, "error": None}
     except Exception as error:
@@ -135,7 +139,10 @@ async def poll_imentiv_results(state: PhaseAState, config: RunnableConfig) -> di
         video_task = _soft_result(get_video_emotions(get_settings(), state["video_id"] or ""))
         audio_task = _soft_result(get_audio_emotions(get_settings(), state["audio_id"] or ""))
         transcript_task = _soft_result(
-            transcribe_elevenlabs(ai_service=get_ai_service(), audio_path=state["audio_path"] or "")
+            transcribe_elevenlabs(
+                ai_service=get_ai_service(),
+                audio_source=state["audio_upload"] or state["audio_path"] or "",
+            )
         )
         video_emotions, audio_emotions, transcript_result = await asyncio.gather(
             video_task,
@@ -164,7 +171,7 @@ async def transcribe_audio(state: PhaseAState, config: RunnableConfig) -> dict[s
         await _send_event(config, "processing_stage", {"stage": "Transcribing speech"})
         transcript, word_timestamps = await transcribe_elevenlabs(
             ai_service=get_ai_service(),
-            audio_path=state["audio_path"] or "",
+            audio_source=state["audio_upload"] or state["audio_path"] or "",
         )
         return {"transcript": transcript, "word_timestamps": word_timestamps, "error": None}
     except Exception as error:
@@ -189,9 +196,7 @@ async def generate_critique(state: PhaseAState, config: RunnableConfig) -> dict[
         await _send_event(config, "processing_stage", {"stage": "Generating critique"})
         critique = await generate_coach_critique(
             settings=get_settings(),
-            theme=state["theme"],
             target_emotion=state["target_emotion"],
-            difficulty=state["difficulty"],
             merged_analysis=state["merged_analysis"],
             previous_critiques=state["previous_critiques"],
         )
@@ -240,6 +245,8 @@ async def check_continue(state: PhaseAState, config: RunnableConfig) -> dict[str
             "continue_session": continue_session,
             "video_path": None,
             "audio_path": None,
+            "video_upload": None,
+            "audio_upload": None,
             "video_id": None,
             "audio_id": None,
             "video_emotions": [],
@@ -275,7 +282,6 @@ def build_merged_analysis(state: PhaseAState) -> tuple[dict[str, Any], list[dict
     match_score = _calculate_match_score(video_emotions, state["target_emotion"])
     filler_words_found = _find_filler_words(state["word_timestamps"])
     merged_analysis = {
-        "theme": state["theme"],
         "target_emotion": state["target_emotion"],
         "scenario_prompt": state["scenario_prompt"],
         "transcript": state["transcript"],
@@ -357,12 +363,12 @@ def compile_phase_a_graph():
 
 async def _stream_tts(config: RunnableConfig, audio_type: str, text: str) -> None:
     await _send_event(config, "tts_start", {"audio_type": audio_type, "text": text})
-    async for chunk in stream_tts_chunks(ai_service=get_ai_service(), text=text):
-        await _send_event(
-            config,
-            "audio_chunk",
-            {"audio_type": audio_type, "chunk": chunk, "mime_type": "audio/mpeg"},
-        )
+    audio = await synthesize_tts_audio(ai_service=get_ai_service(), text=text)
+    await _send_event(
+        config,
+        "audio_blob",
+        {"audio_type": audio_type, "audio": audio, "mime_type": "audio/mpeg"},
+    )
     await _send_event(config, "tts_end", {"audio_type": audio_type})
 
 

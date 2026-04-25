@@ -218,6 +218,16 @@ class PhaseBSessionManager:
         current["transcript_words"] = words
         self.persist_state(session_id)
 
+    def store_transcript_upload(self, session_id: str, upload_ref: dict[str, Any]) -> None:
+        """Store metadata for the full-turn audio upload used for STT."""
+
+        state = self.get_state(session_id)
+        current = state.get("current_turn")
+        if current is None:
+            raise RuntimeError("No active turn.")
+        current["transcript_audio_upload"] = upload_ref
+        self.persist_state(session_id)
+
     def finish_turn(self, session_id: str, critique: str, merged_summary: dict[str, Any]) -> None:
         """Archive the current turn and advance the index."""
 

@@ -31,6 +31,7 @@ class SessionRepository(Protocol):
         session_id: str,
         rounds: list[dict[str, Any]] | None = None,
         summary: dict[str, Any] | None = None,
+        media_refs: list[dict[str, Any]] | None = None,
         raw_state: dict[str, Any] | None = None,
         status: str | None = None,
     ) -> None:
@@ -99,13 +100,12 @@ class InMemorySessionRepository:
                 "created_at": now,
                 "updated_at": now,
                 "setup": {
-                    "theme": initial_state.get("theme"),
                     "target_emotion": initial_state.get("target_emotion"),
-                    "difficulty": initial_state.get("difficulty"),
                 },
                 "rounds": [],
                 "summary": None,
-                "raw_state": _json_safe(initial_state),
+                "media_refs": [],
+                "raw_state": _json_safe(_sanitize_phase_a_state(initial_state)),
             }
         )
 
@@ -115,6 +115,7 @@ class InMemorySessionRepository:
         session_id: str,
         rounds: list[dict[str, Any]] | None = None,
         summary: dict[str, Any] | None = None,
+        media_refs: list[dict[str, Any]] | None = None,
         raw_state: dict[str, Any] | None = None,
         status: str | None = None,
     ) -> None:
@@ -128,7 +129,14 @@ class InMemorySessionRepository:
                 "created_at": _now(),
             },
         )
-        _apply_session_update(document, rounds=rounds, summary=summary, raw_state=raw_state, status=status)
+        _apply_session_update(
+            document,
+            rounds=rounds,
+            summary=summary,
+            media_refs=media_refs,
+            raw_state=raw_state,
+            status=status,
+        )
 
     async def create_phase_b_session(
         self,
@@ -155,7 +163,8 @@ class InMemorySessionRepository:
                     "persona": state.get("persona"),
                 },
                 "summary": _phase_b_summary(state),
-                "raw_state": _json_safe(state),
+                "media_refs": _phase_b_media_refs(state),
+                "raw_state": _json_safe(_sanitize_phase_b_state(state)),
             }
         )
         self._sync_phase_b_chunks(session_id=session_id, state=state, user_id=user_id)
@@ -190,7 +199,8 @@ class InMemorySessionRepository:
                         "persona": state.get("persona"),
                     },
                     "summary": _phase_b_summary(state),
-                    "raw_state": _json_safe(state),
+                    "media_refs": _phase_b_media_refs(state),
+                    "raw_state": _json_safe(_sanitize_phase_b_state(state)),
                 }
             )
         )
@@ -309,18 +319,16 @@ class MongoSessionRepository:
                     "status": "active",
                     "updated_at": now,
                     "setup": {
-                        "theme": initial_state.get("theme"),
                         "target_emotion": initial_state.get("target_emotion"),
-                        "difficulty": initial_state.get("difficulty"),
                     },
                     "rounds": [],
                     "summary": None,
-                    "raw_state": _json_safe(initial_state),
+                    "media_refs": [],
+                    "raw_state": _json_safe(_sanitize_phase_a_state(initial_state)),
                 },
             },
             upsert=True,
         )
-        await self._upsert_phase_b_chunks(session_id=session_id, state=state, user_id=user_id)
 
     async def update_phase_a_session(
         self,
@@ -328,10 +336,17 @@ class MongoSessionRepository:
         session_id: str,
         rounds: list[dict[str, Any]] | None = None,
         summary: dict[str, Any] | None = None,
+        media_refs: list[dict[str, Any]] | None = None,
         raw_state: dict[str, Any] | None = None,
         status: str | None = None,
     ) -> None:
-        update = _session_update_doc(rounds=rounds, summary=summary, raw_state=raw_state, status=status)
+        update = _session_update_doc(
+            rounds=rounds,
+            summary=summary,
+            media_refs=media_refs,
+            raw_state=raw_state,
+            status=status,
+        )
         await self._collection.update_one({"session_id": session_id}, update, upsert=True)
 
     async def create_phase_b_session(
@@ -362,7 +377,8 @@ class MongoSessionRepository:
                         "persona": state.get("persona"),
                     },
                     "summary": _phase_b_summary(state),
-                    "raw_state": _json_safe(state),
+                    "media_refs": _phase_b_media_refs(state),
+                    "raw_state": _json_safe(_sanitize_phase_b_state(state)),
                 },
             },
             upsert=True,
@@ -374,6 +390,7 @@ class MongoSessionRepository:
         session_id: str,
         state: dict[str, Any],
     ) -> None:
+        owner_user_id = await self._resolve_phase_b_user_id(session_id)
         status = str(state.get("status", "active"))
         set_doc = _without_none(
             {
@@ -387,15 +404,28 @@ class MongoSessionRepository:
                     "persona": state.get("persona"),
                 },
                 "summary": _phase_b_summary(state),
-                "raw_state": _json_safe(state),
+                "media_refs": _phase_b_media_refs(state),
+                "raw_state": _json_safe(_sanitize_phase_b_state(state)),
             }
         )
         await self._collection.update_one(
             {"session_id": session_id},
-            {"$set": set_doc, "$setOnInsert": {"created_at": _now(), "user_id": DEFAULT_USER_ID, "mode": "phase_b", "mode_label": "Conversations"}},
+            {
+                "$set": set_doc,
+                "$setOnInsert": {
+                    "created_at": _now(),
+                    "user_id": owner_user_id,
+                    "mode": "phase_b",
+                    "mode_label": "Conversations",
+                },
+            },
             upsert=True,
         )
-        await self._upsert_phase_b_chunks(session_id=session_id, state=state, user_id=DEFAULT_USER_ID)
+        await self._upsert_phase_b_chunks(
+            session_id=session_id,
+            state=state,
+            user_id=owner_user_id,
+        )
 
     async def list_recent_sessions(
         self,
@@ -462,11 +492,18 @@ class MongoSessionRepository:
                 upsert=True,
             )
 
+    async def _resolve_phase_b_user_id(self, session_id: str) -> str:
+        document = await self._collection.find_one({"session_id": session_id}, {"user_id": 1})
+        if not document:
+            return DEFAULT_USER_ID
+        return str(document.get("user_id") or DEFAULT_USER_ID)
+
 
 def _session_update_doc(
     *,
     rounds: list[dict[str, Any]] | None,
     summary: dict[str, Any] | None,
+    media_refs: list[dict[str, Any]] | None,
     raw_state: dict[str, Any] | None,
     status: str | None,
 ) -> dict[str, Any]:
@@ -474,7 +511,8 @@ def _session_update_doc(
         {
             "rounds": _json_safe(rounds) if rounds is not None else None,
             "summary": _json_safe(summary) if summary is not None else None,
-            "raw_state": _json_safe(raw_state) if raw_state is not None else None,
+            "media_refs": _json_safe(media_refs) if media_refs is not None else None,
+            "raw_state": _json_safe(_sanitize_phase_a_state(raw_state)) if raw_state is not None else None,
             "status": status,
             "completed_at": _now() if status == "complete" else None,
             "updated_at": _now(),
@@ -496,6 +534,7 @@ def _apply_session_update(
     *,
     rounds: list[dict[str, Any]] | None,
     summary: dict[str, Any] | None,
+    media_refs: list[dict[str, Any]] | None,
     raw_state: dict[str, Any] | None,
     status: str | None,
 ) -> None:
@@ -504,8 +543,10 @@ def _apply_session_update(
         document["rounds"] = _json_safe(rounds)
     if summary is not None:
         document["summary"] = _json_safe(summary)
+    if media_refs is not None:
+        document["media_refs"] = _json_safe(media_refs)
     if raw_state is not None:
-        document["raw_state"] = _json_safe(raw_state)
+        document["raw_state"] = _json_safe(_sanitize_phase_a_state(raw_state))
     if status is not None:
         document["status"] = status
         if status == "complete":
@@ -604,6 +645,20 @@ def _phase_b_chunk_documents(
                     "mediapipe_metrics": _json_safe(chunk.get("mediapipe_metrics") or {}),
                     "video_emotions": _json_safe(chunk.get("video_emotions") or []),
                     "audio_emotions": _json_safe(chunk.get("audio_emotions") or []),
+                    "video_upload": _phase_b_chunk_upload_ref(
+                        session_id=session_id,
+                        turn_index=turn_index,
+                        chunk_index=int(chunk.get("chunk_index") or 0),
+                        media_kind="video",
+                        upload=chunk.get("video_upload"),
+                    ),
+                    "audio_upload": _phase_b_chunk_upload_ref(
+                        session_id=session_id,
+                        turn_index=turn_index,
+                        chunk_index=int(chunk.get("chunk_index") or 0),
+                        media_kind="audio",
+                        upload=chunk.get("audio_upload"),
+                    ),
                     "transcript_segment": merged_chunk.get("transcript_segment") or "",
                     "merged_summary": _json_safe(merged_chunk) if merged_chunk else None,
                     "dominant_video_emotion": merged_chunk.get("dominant_video_emotion"),
@@ -618,6 +673,87 @@ def _phase_b_chunk_documents(
             documents.append(document)
 
     return documents
+
+
+def _phase_b_media_refs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    session_id = str(state.get("session_id") or "")
+    turns = [turn for turn in state.get("turns", []) if isinstance(turn, dict)]
+    current_turn = state.get("current_turn")
+    if isinstance(current_turn, dict):
+        turns.append(current_turn)
+
+    for turn in turns:
+        turn_index = int(turn.get("turn_index") or 0)
+        transcript_audio_upload = turn.get("transcript_audio_upload")
+        if isinstance(transcript_audio_upload, dict):
+            refs.append(
+                {
+                    "turn_index": turn_index,
+                    "kind": "turn_transcript_audio",
+                    "download_url": (
+                        f"/api/phase-b/sessions/{state.get('session_id') or session_id}"
+                        f"/turns/{turn_index}/transcript-audio"
+                    ),
+                    "upload": _public_upload_ref(transcript_audio_upload),
+                }
+            )
+
+        for chunk in turn.get("chunks") or []:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_index = int(chunk.get("chunk_index") or 0)
+            for kind in ("video_upload", "audio_upload"):
+                upload = chunk.get(kind)
+                if not isinstance(upload, dict):
+                    continue
+                refs.append(
+                    {
+                        "turn_index": turn_index,
+                        "chunk_index": chunk_index,
+                        "kind": kind,
+                        "download_url": (
+                            f"/api/phase-b/sessions/{state.get('session_id') or session_id}"
+                            f"/turns/{turn_index}/chunks/{chunk_index}/{_phase_b_kind_to_media_name(kind)}"
+                        ),
+                        "upload": _public_upload_ref(upload),
+                    }
+                )
+
+    return refs
+
+
+def _phase_b_chunk_upload_ref(
+    *,
+    session_id: str,
+    turn_index: int,
+    chunk_index: int,
+    media_kind: str,
+    upload: Any,
+) -> dict[str, Any] | None:
+    if not isinstance(upload, dict):
+        return None
+    ref = _public_upload_ref(upload)
+    ref["download_url"] = (
+        f"/api/phase-b/sessions/{session_id}/turns/{turn_index}/chunks/{chunk_index}/{media_kind}"
+    )
+    return ref
+
+
+def _phase_b_kind_to_media_name(kind: str) -> str:
+    return "video" if kind == "video_upload" else "audio"
+
+
+def _public_upload_ref(upload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file_id": upload.get("file_id"),
+        "storage_key": upload.get("storage_key"),
+        "filename": upload.get("filename"),
+        "original_filename": upload.get("original_filename"),
+        "mime_type": upload.get("mime_type"),
+        "size_bytes": upload.get("size_bytes"),
+        "uploaded_at": upload.get("uploaded_at"),
+    }
 
 
 def _merged_chunks_by_window(merged_summary: Any) -> dict[tuple[int, int], dict[str, Any]]:
@@ -699,6 +835,35 @@ def _most_common(values: list[Any]) -> str | None:
     if not filtered:
         return None
     return Counter(filtered).most_common(1)[0][0]
+
+
+def _sanitize_phase_a_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(state, dict):
+        return state
+    sanitized = _scrub_media_paths(state)
+    sanitized["video_path"] = None
+    sanitized["audio_path"] = None
+    return sanitized
+
+
+def _sanitize_phase_b_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(state, dict):
+        return state
+    return _scrub_media_paths(state)
+
+
+def _scrub_media_paths(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _scrub_media_paths(item)
+            for key, item in value.items()
+            if key != "path"
+        }
+    if isinstance(value, list):
+        return [_scrub_media_paths(item) for item in value]
+    if isinstance(value, tuple):
+        return [_scrub_media_paths(item) for item in value]
+    return value
 
 
 def _json_safe(value: Any) -> Any:
