@@ -17,4 +17,5 @@ dependencies = [
     "python-multipart",
     "python-dotenv",
     "uvicorn",
+    "grandalf>=0.8",
 ]
