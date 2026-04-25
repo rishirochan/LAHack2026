@@ -610,11 +610,23 @@ async def phase_b_upload_chunk(
 
     video_upload = await _save_media_upload(
         video_file,
-        storage_key=_phase_b_chunk_storage_key(session_id, turn_index, chunk_index, "video", ".webm"),
+        storage_key=_phase_b_chunk_storage_key(
+            session_id,
+            turn_index,
+            chunk_index,
+            "video",
+            _upload_suffix(video_file, ".webm"),
+        ),
     )
     audio_upload = await _save_media_upload(
         audio_file,
-        storage_key=_phase_b_chunk_storage_key(session_id, turn_index, chunk_index, "audio", ".webm"),
+        storage_key=_phase_b_chunk_storage_key(
+            session_id,
+            turn_index,
+            chunk_index,
+            "audio",
+            _upload_suffix(audio_file, ".webm"),
+        ),
     )
     if int(video_upload.get("size_bytes") or 0) == 0 or int(audio_upload.get("size_bytes") or 0) == 0:
         raise HTTPException(status_code=400, detail="Chunk uploads must contain non-empty audio and video.")
@@ -664,7 +676,11 @@ async def phase_b_transcribe(
 
     transcript_audio_upload = await _save_media_upload(
         audio_file,
-        storage_key=_phase_b_transcript_storage_key(session_id, turn_index, ".webm"),
+        storage_key=_phase_b_transcript_storage_key(
+            session_id,
+            turn_index,
+            _upload_suffix(audio_file, ".webm"),
+        ),
     )
     if int(transcript_audio_upload.get("size_bytes") or 0) == 0:
         await get_phase_b_manager().send_event(
@@ -679,10 +695,13 @@ async def phase_b_transcribe(
     from backend.sprint.phase_b.elevenlabs import transcribe_audio
     from backend.shared.ai import get_ai_service
 
-    transcript, words = await transcribe_audio(
-        ai_service=get_ai_service(),
-        audio_source=transcript_audio_upload,
-    )
+    try:
+        transcript, words = await transcribe_audio(
+            ai_service=get_ai_service(),
+            audio_source=transcript_audio_upload,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {error}") from error
 
     get_phase_b_manager().store_transcript(session_id, turn_index, transcript, words)
 
