@@ -11,12 +11,7 @@ from backend.shared.ai import get_ai_service, get_settings
 from backend.shared.db import get_session_repository
 from .elevenlabs import synthesize_tts_audio, transcribe_audio as transcribe_elevenlabs
 from .gemma import generate_coach_critique, generate_scenario_prompt
-from .imentiv import (
-    get_audio_emotions,
-    get_video_emotions,
-    upload_audio,
-    upload_video,
-)
+from .imentiv import analyze_video
 from .session_manager import get_session_manager
 
 
@@ -37,6 +32,7 @@ class PhaseAState(TypedDict):
     audio_upload: dict[str, Any] | None
     video_id: str | None
     audio_id: str | None
+    imentiv_analysis: dict[str, Any]
     video_emotions: list[dict[str, Any]]
     audio_emotions: list[dict[str, Any]]
     transcript: str | None
@@ -62,6 +58,7 @@ def build_initial_state(target_emotion: str) -> PhaseAState:
         "audio_upload": None,
         "video_id": None,
         "audio_id": None,
+        "imentiv_analysis": {},
         "video_emotions": [],
         "audio_emotions": [],
         "transcript": None,
@@ -118,37 +115,41 @@ async def await_recording(state: PhaseAState, config: RunnableConfig) -> dict[st
 
 async def upload_to_imentiv(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
     try:
-        if not state["video_upload"] or not state["audio_upload"]:
-            raise RuntimeError("Recording files were missing.")
+        if not state["video_upload"]:
+            raise RuntimeError("Video recording file was missing.")
 
+        session_id = _session_id(config)
         await _send_event(config, "processing_stage", {"stage": "Uploading recording"})
-        video_task = upload_video(get_settings(), state["video_upload"])
-        audio_task = upload_audio(get_settings(), state["audio_upload"])
-        video_id, audio_id = await asyncio.gather(video_task, audio_task)
-        return {"video_id": video_id, "audio_id": audio_id, "error": None}
+        await _send_event(config, "processing_stage", {"stage": "Analyzing facial and vocal emotion"})
+        analysis = await analyze_video(
+            get_settings(),
+            state["video_upload"],
+            title=f"phase-a-{session_id}-round",
+            description=f"Phase A emotion drill for {state['target_emotion']}.",
+        )
+        return {
+            "video_id": analysis.get("video_id"),
+            "audio_id": analysis.get("audio_id"),
+            "imentiv_analysis": analysis,
+            "video_emotions": analysis.get("video_emotions") if isinstance(analysis.get("video_emotions"), list) else [],
+            "audio_emotions": analysis.get("audio_emotions") if isinstance(analysis.get("audio_emotions"), list) else [],
+            "error": None,
+        }
     except Exception as error:
         return {"error": f"Could not upload recording for emotion analysis: {error}"}
 
 
 async def poll_imentiv_results(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
     try:
-        await _send_event(config, "processing_stage", {"stage": "Analyzing facial emotion"})
-        await _send_event(config, "processing_stage", {"stage": "Analyzing vocal emotion"})
         await _send_event(config, "processing_stage", {"stage": "Transcribing speech"})
 
-        video_task = _soft_result(get_video_emotions(get_settings(), state["video_id"] or ""))
-        audio_task = _soft_result(get_audio_emotions(get_settings(), state["audio_id"] or ""))
         transcript_task = _soft_result(
             transcribe_elevenlabs(
                 ai_service=get_ai_service(),
                 audio_source=state["audio_upload"] or state["audio_path"] or "",
             )
         )
-        video_emotions, audio_emotions, transcript_result = await asyncio.gather(
-            video_task,
-            audio_task,
-            transcript_task,
-        )
+        transcript_result = await transcript_task
 
         transcript = ""
         word_timestamps: list[dict[str, Any]] = []
@@ -156,8 +157,6 @@ async def poll_imentiv_results(state: PhaseAState, config: RunnableConfig) -> di
             transcript, word_timestamps = transcript_result
 
         return {
-            "video_emotions": video_emotions if isinstance(video_emotions, list) else [],
-            "audio_emotions": audio_emotions if isinstance(audio_emotions, list) else [],
             "transcript": transcript,
             "word_timestamps": word_timestamps,
             "error": None,
@@ -249,6 +248,7 @@ async def check_continue(state: PhaseAState, config: RunnableConfig) -> dict[str
             "audio_upload": None,
             "video_id": None,
             "audio_id": None,
+            "imentiv_analysis": {},
             "video_emotions": [],
             "audio_emotions": [],
             "transcript": None,
@@ -289,6 +289,13 @@ def build_merged_analysis(state: PhaseAState) -> tuple[dict[str, Any], list[dict
         "filler_word_count": len(filler_words_found),
         "video_emotion_timeline": video_emotions,
         "audio_emotion_timeline": audio_emotions,
+        "imentiv_summary": state.get("imentiv_analysis", {}).get("summary"),
+        "imentiv_scores": {
+            "confidence_score": state.get("imentiv_analysis", {}).get("confidence_score"),
+            "clarity_score": state.get("imentiv_analysis", {}).get("clarity_score"),
+            "resilience_score": state.get("imentiv_analysis", {}).get("resilience_score"),
+            "engagement_score": state.get("imentiv_analysis", {}).get("engagement_score"),
+        },
         "word_correlations": word_correlations,
         "match_score": match_score,
         "missing_streams": {
@@ -417,13 +424,27 @@ def _nearest_event(timestamp_ms: int, events: list[dict[str, Any]]) -> dict[str,
 
 
 def _calculate_match_score(video_emotions: list[dict[str, Any]], target_emotion: str) -> float:
-    target = target_emotion.lower()
     matches = [
         float(event.get("confidence") or 0)
         for event in video_emotions
-        if str(event.get("emotion_type") or "").lower() == target
+        if _emotion_matches(str(event.get("emotion_type") or ""), target_emotion)
     ]
     return max(matches, default=0)
+
+
+def _emotion_matches(observed_emotion: str, target_emotion: str) -> bool:
+    return _emotion_key(observed_emotion) == _emotion_key(target_emotion)
+
+
+def _emotion_key(emotion: str) -> str:
+    normalized = emotion.lower().strip()
+    aliases = {
+        "neutrality (neutral)": "neutral",
+        "neutrality": "neutral",
+        "happy": "happiness",
+        "confident": "confidence",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _find_filler_words(word_timestamps: list[dict[str, Any]]) -> list[str]:

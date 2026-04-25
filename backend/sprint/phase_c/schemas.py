@@ -17,6 +17,8 @@ class ChunkRecord(TypedDict):
     video_emotions: list[dict[str, Any]] | None
     audio_emotions: list[dict[str, Any]] | None
     status: ChunkStatus
+    imentiv_analysis: NotRequired[dict[str, Any] | None]
+    error: NotRequired[str | None]
 
 
 class RecordingState(TypedDict):

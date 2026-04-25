@@ -55,6 +55,8 @@ class ChunkRecord(TypedDict):
     status: ChunkStatus
     video_upload: NotRequired[dict[str, Any] | None]
     audio_upload: NotRequired[dict[str, Any] | None]
+    imentiv_analysis: NotRequired[dict[str, Any] | None]
+    error: NotRequired[str | None]
 
 
 class TurnState(TypedDict):

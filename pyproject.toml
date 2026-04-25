@@ -17,10 +17,11 @@ dependencies = [
     "pydantic-settings",
     "python-multipart",
     "python-dotenv",
+    "requests",
     "uvicorn",
     "grandalf>=0.8",
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*"]
+include = ["backend*", "imentiv*"]
 exclude = ["frontend*", "tests*", "vendor*"]
