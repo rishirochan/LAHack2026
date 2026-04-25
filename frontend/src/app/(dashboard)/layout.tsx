@@ -1,5 +1,6 @@
 'use client';
 
+import AuthGate from '@/auth/AuthGate';
 import Sidebar from '@/components/Sidebar';
 import { SidebarProvider, useSidebar } from '@/context/SidebarContext';
 
@@ -18,8 +19,10 @@ function DashboardFrame({ children }: { children: React.ReactNode }) {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <SidebarProvider>
-      <DashboardFrame>{children}</DashboardFrame>
-    </SidebarProvider>
+    <AuthGate>
+      <SidebarProvider>
+        <DashboardFrame>{children}</DashboardFrame>
+      </SidebarProvider>
+    </AuthGate>
   );
 }
