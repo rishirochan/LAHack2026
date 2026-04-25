@@ -1,7 +1,8 @@
  'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useAuth } from '@/auth/AuthProvider';
 import { useSidebar } from '@/context/SidebarContext';
 import {
   Home,
@@ -10,6 +11,7 @@ import {
   MessageSquare,
   Mic,
   FileText,
+  LogOut,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -34,6 +36,8 @@ const recentSessions = [
 export default function Sidebar() {
   const { expanded, toggleSidebar } = useSidebar();
   const pathname = usePathname();
+  const router = useRouter();
+  const { logout } = useAuth();
 
   const isActive = (path: string) => pathname === path;
 
@@ -127,6 +131,18 @@ export default function Sidebar() {
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Logout */}
+      <button
+        onClick={() => {
+          logout();
+          router.push('/');
+        }}
+        className={`${navItemBase} ${expanded ? navItemExpanded : navItemCollapsed} mb-2`}
+      >
+        <LogOut size={18} />
+        {expanded && <span className="text-sm">Log out</span>}
+      </button>
 
       {/* Collapse Toggle */}
       <button

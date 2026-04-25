@@ -19,6 +19,8 @@ from backend.shared.ai.settings import AISettings
 logger = logging.getLogger(__name__)
 
 _client: ImentivClient | None = None
+AUDIO_ANALYSIS_GRACE_SECONDS = 45
+AUDIO_ANALYSIS_POLL_INTERVAL_SECONDS = 2.0
 
 
 def get_imentiv_client() -> ImentivClient:
@@ -83,6 +85,9 @@ async def analyze_video_file(
     if str(results.get("status") or "").lower() == "failed":
         raise RuntimeError(f"Imentiv analysis failed for video {video_id}.")
 
+    if results.get("audio_id") and not has_audio_analysis(results):
+        results = await asyncio.to_thread(wait_for_audio_analysis, client, video_id, results)
+
     audio_segments: list[dict[str, Any]] = []
     audio_id = results.get("audio_id")
     if audio_id:
@@ -93,6 +98,40 @@ async def analyze_video_file(
     if audio_id:
         normalized["audio_id"] = str(audio_id)
     return normalized
+
+
+def wait_for_audio_analysis(client: ImentivClient, video_id: str, initial_results: dict[str, Any]) -> dict[str, Any]:
+    """Imentiv can mark video complete before audio/speaker fields appear."""
+
+    latest = initial_results
+    deadline = time.monotonic() + AUDIO_ANALYSIS_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if has_audio_analysis(latest):
+            return latest
+        time.sleep(AUDIO_ANALYSIS_POLL_INTERVAL_SECONDS)
+        try:
+            latest = client.video.get_results(video_id, wait=False)
+        except Exception as error:
+            logger.debug("Imentiv audio analysis poll failed for video %s: %s", video_id, error)
+    logger.info("Imentiv audio analysis was still empty after grace polling for video %s.", video_id)
+    return latest
+
+
+def has_audio_analysis(results: Any) -> bool:
+    """Return True when Imentiv has populated audio emotion evidence."""
+
+    data = _to_mapping(results)
+    emotion_analysis = _to_mapping(data.get("emotion_analysis"))
+    overall_audio = _to_mapping(_nested_get(emotion_analysis, ("overall", "audio")))
+    if _has_numeric_scores(overall_audio):
+        return True
+
+    speakers = _to_mapping(emotion_analysis.get("speakers"))
+    return any(_has_numeric_scores(_to_mapping(_to_mapping(speaker).get("audio"))) for speaker in speakers.values())
+
+
+def _has_numeric_scores(scores: dict[str, Any]) -> bool:
+    return any(isinstance(value, int | float) for value in scores.values())
 
 
 def extract_video_id(upload_result: Any) -> str:
@@ -192,6 +231,7 @@ def normalize_imentiv_results(
         "video_emotions": video_emotions,
         "audio_emotions": audio_emotions,
         "text_emotions": text_emotions,
+        "is_mock": False,
         "raw": data,
     }
 
@@ -201,25 +241,69 @@ def extract_emotion_events(data: Any, *, preferred_keys: tuple[str, ...] = ()) -
 
     root = _to_mapping(data)
     candidates: list[Any] = []
+    modality = _preferred_modality(preferred_keys)
+    if modality:
+        candidates.extend(_emotion_analysis_candidates(root, modality))
+
     for key in preferred_keys:
+        if key == "emotion_analysis":
+            continue
         value = root.get(key)
         candidates.append(value)
         if isinstance(value, dict):
             candidates.extend([value.get("overall"), value.get("emotions"), value.get("timeline")])
-    candidates.extend(
-        [
-            root.get("video_emotions"),
-            root.get("emotions"),
-            _nested_get(root, ("emotion_analysis", "overall")),
-            _nested_get(root, ("multimodal_analytics", "emotions")),
-            _nested_get(root, ("results", "emotions")),
-        ]
-    )
+    candidates.extend([_nested_get(root, ("multimodal_analytics", "emotions")), _nested_get(root, ("results", "emotions"))])
 
     events: list[dict[str, Any]] = []
     for candidate in candidates:
         events.extend(_flatten_emotion_blob(candidate))
     return events
+
+
+def _preferred_modality(preferred_keys: tuple[str, ...]) -> str | None:
+    if "video_emotions" in preferred_keys:
+        return "video"
+    if "audio_emotions" in preferred_keys or "audio" in preferred_keys:
+        return "audio"
+    if "text_emotions" in preferred_keys or "text" in preferred_keys:
+        return "text"
+    return None
+
+
+def _emotion_analysis_candidates(root: dict[str, Any], modality: str) -> list[Any]:
+    emotion_analysis = _to_mapping(root.get("emotion_analysis"))
+    if not emotion_analysis:
+        return []
+
+    candidates: list[Any] = [
+        _aggregate_emotion_events(_nested_get(emotion_analysis, ("overall", modality)), f"overall_{modality}")
+    ]
+    if modality == "video":
+        faces = _to_mapping(emotion_analysis.get("faces"))
+        candidates.extend(_aggregate_emotion_events(scores, str(face_name)) for face_name, scores in faces.items())
+    if modality in {"audio", "text"}:
+        speakers = _to_mapping(emotion_analysis.get("speakers"))
+        candidates.extend(
+            _aggregate_emotion_events(_nested_get(_to_mapping(speaker), (modality,)), str(speaker_name))
+            for speaker_name, speaker in speakers.items()
+        )
+    return candidates
+
+
+def _aggregate_emotion_events(scores: Any, source: str) -> list[dict[str, Any]]:
+    data = _to_mapping(scores)
+    if not data or not all(isinstance(value, int | float) for value in data.values()):
+        return []
+    return [
+        {
+            "emotion_type": str(label),
+            "confidence": float(score),
+            "timestamp": None,
+            "is_aggregate": True,
+            "source": source,
+        }
+        for label, score in data.items()
+    ]
 
 
 def _extract_or_derive_scores(data: dict[str, Any], emotions: list[dict[str, Any]]) -> dict[str, float]:
@@ -265,7 +349,7 @@ def _flatten_emotion_blob(blob: Any) -> list[dict[str, Any]]:
             return [_normalize_emotion_event(blob)]
         if all(isinstance(value, int | float) for value in blob.values()):
             return [
-                {"emotion_type": str(label), "confidence": float(score), "timestamp": 0}
+                {"emotion_type": str(label), "confidence": float(score), "timestamp": None, "is_aggregate": True}
                 for label, score in blob.items()
             ]
         events: list[dict[str, Any]] = []
@@ -279,8 +363,16 @@ def _normalize_emotion_event(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "emotion_type": event.get("emotion_type") or event.get("emotion") or event.get("label") or event.get("name"),
         "confidence": float(event.get("confidence") or event.get("score") or event.get("probability") or 0),
-        "timestamp": int(event.get("timestamp") or event.get("time_ms") or event.get("start_millis") or 0),
+        "timestamp": _normalize_timestamp(event),
+        "is_aggregate": bool(event.get("is_aggregate")),
+        "source": event.get("source"),
     }
+
+
+def _normalize_timestamp(event: dict[str, Any]) -> int | None:
+    if event.get("is_aggregate"):
+        return None
+    return int(event.get("timestamp") or event.get("time_ms") or event.get("start_millis") or 0)
 
 
 def _extract_segments_from_results(data: dict[str, Any]) -> list[dict[str, Any]]:

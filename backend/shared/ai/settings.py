@@ -28,7 +28,7 @@ class AISettings(BaseSettings):
     imentiv_api_key: str
     imentiv_base_url: str = "https://api.imentiv.ai/"
     imentiv_user_consent_version: str = "2.0.0"
-    imentiv_mock: bool = True
+    imentiv_mock: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",
