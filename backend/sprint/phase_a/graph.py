@@ -7,7 +7,8 @@ from typing import Any, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
-from ...shared.ai import get_ai_service, get_settings
+from backend.shared.ai import get_ai_service, get_settings
+from backend.shared.db import get_session_repository
 from .elevenlabs import stream_tts_chunks, transcribe_audio as transcribe_elevenlabs
 from .gemma import generate_coach_critique, generate_scenario_prompt
 from .imentiv import (
@@ -226,7 +227,14 @@ async def check_continue(state: PhaseAState, config: RunnableConfig) -> dict[str
     try:
         continue_session = await get_session_manager().wait_for_continue(_session_id(config))
         if not continue_session:
-            summary = get_session_manager().get_summary(_session_id(config)).model_dump()
+            session_id = _session_id(config)
+            summary = get_session_manager().get_summary(session_id).model_dump()
+            await get_session_repository().update_phase_a_session(
+                session_id=session_id,
+                summary=summary,
+                raw_state=state,
+                status="complete",
+            )
             await _send_event(config, "session_summary", summary)
         return {
             "continue_session": continue_session,

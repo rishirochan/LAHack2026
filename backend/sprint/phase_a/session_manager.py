@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 
+from backend.shared.db import get_session_repository
+from backend.shared.db.tasks import schedule_repository_write
 from .schemas import RoundSummary, SessionSummaryResponse
 
 @dataclass
@@ -35,6 +37,12 @@ class PhaseASessionManager:
         session_id = str(uuid4())
         session = ActiveSession(session_id=session_id, initial_state=initial_state)
         self._sessions[session_id] = session
+        schedule_repository_write(
+            get_session_repository().create_phase_a_session(
+                session_id=session_id,
+                initial_state=initial_state,
+            )
+        )
         return session
 
     def get_session(self, session_id: str) -> ActiveSession:
@@ -98,7 +106,14 @@ class PhaseASessionManager:
         self.get_session(session_id).task = task
 
     def store_state(self, session_id: str, state: dict[str, Any]) -> None:
-        self.get_session(session_id).latest_state = state
+        session = self.get_session(session_id)
+        session.latest_state = state
+        schedule_repository_write(
+            get_session_repository().update_phase_a_session(
+                session_id=session_id,
+                raw_state=state,
+            )
+        )
 
     def add_round(self, session_id: str, state: dict[str, Any]) -> None:
         merged_analysis = state.get("merged_analysis") or {}
@@ -109,7 +124,17 @@ class PhaseASessionManager:
             filler_words_found=list(merged_analysis.get("filler_words_found") or []),
             filler_word_count=int(merged_analysis.get("filler_word_count") or 0),
         )
-        self.get_session(session_id).rounds.append(summary)
+        session = self.get_session(session_id)
+        session.rounds.append(summary)
+        session_summary = self.get_summary(session_id).model_dump()
+        schedule_repository_write(
+            get_session_repository().update_phase_a_session(
+                session_id=session_id,
+                rounds=[round_summary.model_dump() for round_summary in session.rounds],
+                summary=session_summary,
+                raw_state=state,
+            )
+        )
 
     def get_summary(self, session_id: str) -> SessionSummaryResponse:
         session = self.get_session(session_id)

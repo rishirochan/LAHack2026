@@ -1,0 +1,15 @@
+name: imentiv-python-sdk
+id: ari:cloud:compass:b9c6c0e4-2fc2-4035-ad4c-216e677b2e3d:component/3f1e4da5-e9c9-418f-8791-878965d7ea4e/1cab1d5a-c153-462d-a7b5-d182fd4946ae
+description: Python SDK for the Imentiv API
+configVersion: 1
+typeId: SERVICE
+fields:
+  tier: 4
+links:
+  - name: GitHub Repository
+    type: REPOSITORY
+    url: https://github.com/imentiv/imentiv-python-sdk
+relationships:
+  DEPENDS_ON: []
+labels:
+  - source:github
