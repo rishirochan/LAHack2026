@@ -12,8 +12,8 @@ class AIServiceFacade:
 
     def __init__(self, settings: AISettings):
         self.settings = settings
-        self.gemma_model = create_gemma_model(settings)
-        self.haiku_model = create_haiku_model(settings)
+        self.gemma_model = create_gemma_model(settings) if settings.openrouter_api_key else None
+        self.haiku_model = create_haiku_model(settings) if settings.openrouter_api_key else None
         self.elevenlabs_client = create_elevenlabs_client(settings)
 
 

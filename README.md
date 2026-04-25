@@ -12,12 +12,19 @@ Use your Python package workflow to install dependencies from `pyproject.toml`.
 
 Copy `.env.example` to `.env`, then fill in real values:
 
-- `OPENROUTER_API_KEY`
+- `OPENROUTER_API_KEY` (optional unless using the legacy OpenRouter facade)
 - `OPENROUTER_MODEL_GEMMA`
 - `OPENROUTER_MODEL_HAIKU`
+- `GOOGLE_AI_API_KEY`
+- `GOOGLE_GEMMA_MODEL` (defaults to `gemma-4`)
 - `ELEVENLABS_API_KEY`
 - `ELEVENLABS_DEFAULT_VOICE_ID`
 - `ELEVENLABS_STT_MODEL` (default `scribe_v1` is prefilled)
+- `ELEVENLABS_TTS_MODEL` (default `eleven_multilingual_v2` is prefilled)
+- `IMENTIV_API_KEY`
+- `IMENTIV_BASE_URL` (defaults to `https://api.imentiv.ai/v2`)
+- `NEXT_PUBLIC_API_URL` (frontend backend HTTP URL)
+- `NEXT_PUBLIC_WS_URL` (frontend backend websocket URL)
 
 `OPENROUTER_BASE_URL` defaults to `https://openrouter.ai/api/v1`.
 
@@ -33,3 +40,5 @@ Use these shared entrypoints anywhere in backend code:
 - OpenRouter Gemma chat model
 - OpenRouter Haiku chat model
 - ElevenLabs client (TTS/STT ready)
+
+Phase A Emotion Drills uses Google AI/Gemma for both scenario generation and critique generation, ElevenLabs for speech-to-text and TTS playback, and Imentiv for video/audio emotion analysis.

@@ -7,11 +7,14 @@ requires-python = ">=3.12"
 dependencies = [
     "elevenlabs",
     "fastapi",
+    "httpx",
     "langchain",
     "langchain-core",
     "langchain-openai",
     "langgraph",
     "openai",
     "pydantic-settings",
+    "python-multipart",
     "python-dotenv",
+    "uvicorn",
 ]

@@ -12,14 +12,21 @@ class AISettings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    openrouter_api_key: str
+    openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model_gemma: str = "openrouter/gemma-placeholder"
     openrouter_model_haiku: str = "openrouter/haiku-placeholder"
 
+    google_ai_api_key: str
+    google_gemma_model: str = "gemma-4"
+
     elevenlabs_api_key: str
     elevenlabs_default_voice_id: str = "voice-placeholder"
     elevenlabs_stt_model: str = "scribe_v1"
+    elevenlabs_tts_model: str = "eleven_multilingual_v2"
+
+    imentiv_api_key: str
+    imentiv_base_url: str = "https://api.imentiv.ai/v2"
 
     model_config = SettingsConfigDict(
         env_file=".env",
