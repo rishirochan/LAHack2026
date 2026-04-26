@@ -208,6 +208,7 @@ class StartConversationRequest(BaseModel):
     practice_prompt: str | None = None
     scenario_preference: Scenario | None = None
     voice_id: str | None = None
+    speak_peer_message: bool = True
     max_turns: int = Field(default=6, ge=3, le=8)
     minimum_turns: int = Field(default=3, ge=3, le=5)
 

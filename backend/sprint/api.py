@@ -381,9 +381,6 @@ def _phase_c_replay_scorecard_from_summary(summary: dict[str, object]) -> dict[s
         "strengths": summary.get("strengths") or [],
         "improvement_areas": summary.get("improvement_areas") or [],
     }
-
->>>>>>> origin/master
-
 def _to_replay_session(session: dict) -> dict[str, object]:
     return {
         "session_id": session.get("session_id"),
@@ -948,7 +945,7 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
     _queue_phase_b_next_turn(
         session.session_id,
         voice_id=request.voice_id,
-        speak_peer_message=True,
+        speak_peer_message=request.speak_peer_message,
     )
     return StartConversationResponse(session_id=session.session_id)
 

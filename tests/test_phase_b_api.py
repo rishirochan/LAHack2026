@@ -143,6 +143,27 @@ class PhaseBApiTests(unittest.TestCase):
             speak_peer_message=True,
         )
 
+    def test_start_session_can_skip_peer_tts_on_first_turn(self) -> None:
+        self.manager._sessions.clear()
+
+        with patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True) as queue_mock:
+            response = self.client.post(
+                "/api/phase-b/sessions",
+                json={
+                    "practice_prompt": "I want a text-only mock interview to warm up quickly.",
+                    "voice_id": "voice-42",
+                    "speak_peer_message": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        session_id = response.json()["session_id"]
+        queue_mock.assert_called_once_with(
+            session_id,
+            voice_id="voice-42",
+            speak_peer_message=False,
+        )
+
     def test_start_session_rejects_prompt_over_word_limit(self) -> None:
         self.manager._sessions.clear()
         over_limit_prompt = " ".join(f"word{i}" for i in range(61))

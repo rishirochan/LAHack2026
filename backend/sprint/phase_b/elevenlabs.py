@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -22,9 +23,44 @@ async def stream_tts_chunks(
     """
 
     effective_voice = voice_id or ai_service.settings.elevenlabs_default_voice_id
-    chunks = await asyncio.to_thread(_collect_tts_chunks, ai_service, text, effective_voice)
-    for chunk in chunks:
-        yield base64.b64encode(chunk).decode("ascii")
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    stop_event = threading.Event()
+    stream_finished = object()
+
+    def produce_chunks() -> None:
+        stream = None
+        try:
+            stream = _create_tts_stream(ai_service, text, effective_voice)
+            for chunk in stream:
+                if stop_event.is_set():
+                    break
+                if isinstance(chunk, bytes):
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+        except Exception as error:
+            loop.call_soon_threadsafe(queue.put_nowait, error)
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            loop.call_soon_threadsafe(queue.put_nowait, stream_finished)
+
+    producer = threading.Thread(target=produce_chunks, name="phase-b-tts-stream", daemon=True)
+    producer.start()
+
+    try:
+        while True:
+            item = await queue.get()
+            if item is stream_finished:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield base64.b64encode(item).decode("ascii")
+    finally:
+        stop_event.set()
 
 
 async def synthesize_tts_audio(
@@ -61,26 +97,32 @@ def _collect_tts_chunks(
     text: str,
     voice_id: str,
 ) -> list[bytes]:
+    stream = _create_tts_stream(ai_service, text, voice_id)
+    return [chunk for chunk in stream if isinstance(chunk, bytes)]
+
+
+def _create_tts_stream(
+    ai_service: AIServiceFacade,
+    text: str,
+    voice_id: str,
+):
     client = ai_service.elevenlabs_client
     settings = ai_service.settings
 
     if hasattr(client, "text_to_speech") and hasattr(client.text_to_speech, "stream"):
-        stream = client.text_to_speech.stream(
+        return client.text_to_speech.stream(
             voice_id=voice_id,
             model_id=settings.elevenlabs_tts_model,
             text=text,
         )
-    elif hasattr(client, "generate"):
-        stream = client.generate(
+    if hasattr(client, "generate"):
+        return client.generate(
             text=text,
             voice=voice_id,
             model=settings.elevenlabs_tts_model,
             stream=True,
         )
-    else:
-        raise RuntimeError("ElevenLabs client does not expose a TTS streaming method.")
-
-    return [chunk for chunk in stream if isinstance(chunk, bytes)]
+    raise RuntimeError("ElevenLabs client does not expose a TTS streaming method.")
 
 
 # ------------------------------------------------------------------

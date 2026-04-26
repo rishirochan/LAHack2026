@@ -175,6 +175,7 @@ export function usePhaseBConversation(options?: {
         body: JSON.stringify({
           practice_prompt: normalizedPrompt,
           voice_id: voiceId,
+          speak_peer_message: playPeerVoice,
         }),
       });
 
