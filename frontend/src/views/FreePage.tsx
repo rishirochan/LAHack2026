@@ -5,10 +5,19 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Mic, RotateCcw, Square, Video } from 'lucide-react';
 
-import { EmotionTimeline } from '@/components/EmotionTimeline';
+
 import { PhaseCScorecard } from '@/components/PhaseCScorecard';
+import { WordAudit } from '@/components/WordAudit';
+import { PatternsDetected } from '@/components/PatternsDetected';
 import { usePhaseCSession } from '@/hooks/usePhaseCSession';
-import { getPhaseCMergedChunks, useSession } from '@/hooks/useSessions';
+import {
+  getPhaseCTranscriptWords,
+  getPhaseCFillerWordsFound,
+  getPhaseCPatterns,
+  getPhaseCWordCorrelations,
+  getPhaseCMergedChunks,
+  useSession,
+} from '@/hooks/useSessions';
 
 const focusOptions = [
   'Filler words',
@@ -42,6 +51,8 @@ export default function FreePage() {
     transcriptPreview,
     previewRef,
     startSession,
+    beginRecording,
+    restartRecording,
     stopRecording,
     retryRecording,
     resetAll,
@@ -52,6 +63,10 @@ export default function FreePage() {
     error: persistedSessionError,
     refetch: refetchPersistedSession,
   } = useSession(status === 'results' && sessionId ? sessionId : null);
+  const transcriptWords = getPhaseCTranscriptWords(persistedSession);
+  const fillerWordsFound = getPhaseCFillerWordsFound(persistedSession);
+  const patternsData = getPhaseCPatterns(persistedSession);
+  const wordCorrelations = getPhaseCWordCorrelations(persistedSession);
   const mergedChunks = getPhaseCMergedChunks(persistedSession);
   const uploadedChunkCount = chunkUploads.filter((chunk) => chunk.status === 'uploaded').length;
   const failedChunkCount = chunkUploads.filter((chunk) => chunk.status === 'failed').length;
@@ -108,11 +123,13 @@ export default function FreePage() {
 
   const showSetup = status === 'setup';
   const showActiveSession =
+    status === 'preparing' ||
     status === 'ready' ||
     status === 'recording' ||
     status === 'uploading' ||
     status === 'processing' ||
     status === 'error';
+  const isPreparing = status === 'preparing';
   const isRecording = status === 'recording';
   const isBusy = status === 'uploading' || status === 'processing';
   const captureStepActive = status !== 'setup';
@@ -122,6 +139,15 @@ export default function FreePage() {
 
   return (
     <div className="mx-auto max-w-5xl">
+      <div className="mb-6">
+        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+          Free Speaking
+        </h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Record one uninterrupted speaking session and get a full broker scorecard.
+        </p>
+      </div>
+
       <AnimatePresence mode="wait">
         {showSetup && (
           <motion.div
@@ -218,11 +244,13 @@ export default function FreePage() {
                   <div>
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Camera Feed</p>
                     <p className="mt-1 text-sm text-slate-500">
-                      {isRecording
-                        ? 'Live preview while the session is recording.'
-                        : isBusy
-                        ? 'Your recording has stopped. Processing is underway.'
-                        : 'Start or retry the recording when you are ready.'}
+                      {isPreparing
+                        ? 'Turning on your camera and finishing session setup…'
+                        : isRecording
+                          ? 'Live preview while the session is recording.'
+                          : isBusy
+                            ? 'Your recording has stopped. Processing is underway.'
+                            : 'When you are ready, click Start recording below. Your camera stays on for preview.'}
                     </p>
                   </div>
                   <div className="rounded-full bg-cream-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -258,7 +286,15 @@ export default function FreePage() {
                             isRecording ? 'animate-pulse bg-rose-400' : 'bg-white/50'
                           }`}
                         />
-                        {isRecording ? 'Recording' : isBusy ? 'Processing' : status === 'error' ? 'Needs retry' : 'Ready'}
+                        {isPreparing
+                          ? 'Setting up'
+                          : isRecording
+                            ? 'Recording'
+                            : isBusy
+                              ? 'Processing'
+                              : status === 'error'
+                                ? 'Needs retry'
+                                : 'Ready'}
                       </div>
                       <div className="rounded-full bg-black/35 px-3 py-2 font-mono text-sm text-white backdrop-blur-sm">
                         {formatTime(recordSeconds)}
@@ -271,7 +307,13 @@ export default function FreePage() {
                   <div className="mb-3 flex items-center justify-between">
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Mic Activity</p>
                     <p className="text-xs text-slate-500">
-                      {isRecording ? 'Live analyser' : isBusy ? processingStage || 'Preparing results' : 'Waiting'}
+                      {isPreparing
+                        ? 'Connecting…'
+                        : isRecording
+                          ? 'Live analyser'
+                          : isBusy
+                            ? processingStage || 'Preparing results'
+                            : 'Waiting'}
                     </p>
                   </div>
                   <div className="flex h-28 items-end justify-center gap-[3px] rounded-[22px] bg-cream-50 px-4 py-5">
@@ -384,29 +426,68 @@ export default function FreePage() {
                       className="inline-flex items-center gap-2 rounded-full bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-rose-600"
                     >
                       <Square size={16} />
-                      Stop Recording
+                      Stop recording
+                    </button>
+                  )}
+
+                  {isRecording && (
+                    <button
+                      type="button"
+                      onClick={() => void restartRecording()}
+                      className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                    >
+                      <RotateCcw size={16} />
+                      Restart take
                     </button>
                   )}
 
                   {!isRecording && !isBusy && (
                     <button
                       type="button"
-                      onClick={() => void retryRecording()}
-                      className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                      disabled={isPreparing}
+                      onClick={() => {
+                        if (isPreparing) {
+                          return;
+                        }
+                        if (status === 'error') {
+                          void retryRecording();
+                          return;
+                        }
+                        void beginRecording();
+                      }}
+                      className={`inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-colors ${
+                        isPreparing
+                          ? 'cursor-not-allowed bg-cream-200 text-slate-400'
+                          : 'bg-navy-500 text-white hover:bg-navy-600'
+                      }`}
                     >
-                      <Mic size={16} />
-                      {status === 'error' ? 'Try Again' : 'Start Recording'}
+                      {isPreparing ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Setting up…
+                        </>
+                      ) : status === 'error' ? (
+                        <>
+                          <Mic size={16} />
+                          Try again
+                        </>
+                      ) : (
+                        <>
+                          <Mic size={16} />
+                          Start recording
+                        </>
+                      )}
                     </button>
                   )}
 
-                  {(status === 'error' || status === 'ready') && (
+                  {(status === 'preparing' || status === 'error' || status === 'ready') && !isRecording && !isBusy && (
                     <button
                       type="button"
                       onClick={resetAll}
                       className="inline-flex items-center gap-2 rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
                     >
                       <RotateCcw size={16} />
-                      Start Over
+                      Start over
                     </button>
                   )}
                 </div>
@@ -455,7 +536,8 @@ export default function FreePage() {
             exit={{ opacity: 0, y: -16 }}
             className="space-y-6"
           >
-            <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+              {/* Left column: Video */}
               <div className="overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-sm">
                 <div className="border-b border-cream-200 px-6 py-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Recorded Session</p>
@@ -476,52 +558,42 @@ export default function FreePage() {
                       Recording preview unavailable
                     </div>
                   )}
-
-                  <div className="mt-5 grid gap-4">
-                    <div className="rounded-2xl bg-cream-50 px-4 py-4">
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Transcript</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        {transcriptPreview || 'Transcript preview unavailable for this session.'}
-                      </p>
-                    </div>
-                  </div>
                 </div>
               </div>
 
-              <div className="space-y-6">
-                <EmotionTimeline
-                  chunks={mergedChunks}
-                  loading={persistedSessionLoading}
-                  errorMessage={persistedSessionError}
+              {/* Right column: Transcript audit + action buttons */}
+              <div className="flex flex-col gap-6">
+                <WordAudit
+                  transcriptWords={transcriptWords}
+                  fillerWordsFound={fillerWordsFound}
                 />
-                {persistedSessionLoading && (
-                  <div className="inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
-                    <Loader2 size={16} className="animate-spin text-navy-500" />
-                    Loading persisted chunk analysis
-                  </div>
-                )}
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={resetAll}
+                    className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                  >
+                    <RotateCcw size={16} />
+                    Record Again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => router.push('/home')}
+                    className="rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
+                  >
+                    Back to Home
+                  </button>
+                </div>
               </div>
             </div>
 
             <PhaseCScorecard scorecard={scorecard} writtenSummary={writtenSummary} />
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={resetAll}
-                className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
-              >
-                <RotateCcw size={16} />
-                Record Again
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
-              >
-                Back to Home
-              </button>
-            </div>
+            <PatternsDetected
+              patterns={patternsData}
+              wordCorrelations={wordCorrelations}
+            />
           </motion.div>
         )}
       </AnimatePresence>

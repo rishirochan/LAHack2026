@@ -57,6 +57,11 @@ class PhaseCApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "active")
 
+    def test_create_session_accepts_empty_request_body(self) -> None:
+        response = self.client.post("/api/phase-c/sessions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "active")
+
     def test_recording_start_emits_recording_ready(self) -> None:
         session = self.manager.create_session()
         response = self.client.post(f"/api/phase-c/sessions/{session.session_id}/recording/start")

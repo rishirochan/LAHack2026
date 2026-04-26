@@ -15,6 +15,8 @@ import { startTransition, useCallback, useEffect, useMemo, useState } from 'reac
 
 import { EmotionTimeline } from '@/components/EmotionTimeline';
 import { PhaseCScorecard } from '@/components/PhaseCScorecard';
+import { WordAudit } from '@/components/WordAudit';
+import { PatternsDetected } from '@/components/PatternsDetected';
 import {
   Accordion,
   AccordionContent,
@@ -27,6 +29,10 @@ import {
   getPhaseCMergedChunks,
   getPhaseCScorecardFromSession,
   getPhaseCWrittenSummary,
+  getPhaseCTranscriptWords,
+  getPhaseCFillerWordsFound,
+  getPhaseCPatterns,
+  getPhaseCWordCorrelations,
   getSessionSummary,
   useRecentSessions,
   useSession,
@@ -426,6 +432,10 @@ function PhaseCReplayDetail({ session }: { session: PersistedSession }) {
   const scorecard = getPhaseCScorecardFromSession(session);
   const writtenSummary = getPhaseCWrittenSummary(session);
   const mergedChunks = getPhaseCMergedChunks(session);
+  const transcriptWords = getPhaseCTranscriptWords(session);
+  const fillerWordsFound = getPhaseCFillerWordsFound(session);
+  const patternsData = getPhaseCPatterns(session);
+  const wordCorrelations = getPhaseCWordCorrelations(session);
   const chunkVideoRefs = session.media_refs
     .filter((mediaRef) => mediaRef.kind === 'video_upload' && typeof mediaRef.chunk_index === 'number')
     .sort((left, right) => Number(left.chunk_index) - Number(right.chunk_index));
@@ -448,6 +458,14 @@ function PhaseCReplayDetail({ session }: { session: PersistedSession }) {
     <div className="space-y-6">
       <PhaseCScorecard scorecard={scorecard} writtenSummary={writtenSummary} />
       <EmotionTimeline chunks={mergedChunks} />
+      <WordAudit
+        transcriptWords={transcriptWords}
+        fillerWordsFound={fillerWordsFound}
+      />
+      <PatternsDetected
+        patterns={patternsData}
+        wordCorrelations={wordCorrelations}
+      />
       {chunkItems.length ? (
         <ReplayChunkAccordion
           title="Recording Chunks"

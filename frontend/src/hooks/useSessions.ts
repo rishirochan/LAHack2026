@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type {
+  PatternBadge,
   PhaseCMergedAnalysisChunk,
   PhaseCScorecard,
+  TranscriptWord,
+  WordCorrelation,
 } from '@/lib/phase-c-api';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -44,6 +47,11 @@ export interface PersistedSession {
     scorecard: PhaseCScorecard | null;
     written_summary: string;
     merged_chunks: PhaseCMergedAnalysisChunk[];
+    full_transcript: string;
+    transcript_words: TranscriptWord[];
+    filler_words_found: string[];
+    patterns: PatternBadge[];
+    word_correlations: WordCorrelation[];
   } | null;
 }
 
@@ -188,6 +196,36 @@ export function getSessionSummary(
   session: PersistedSession | null | undefined,
 ): Record<string, unknown> {
   return isRecord(session?.summary) ? session.summary : {};
+}
+
+export function getPhaseCTranscriptWords(
+  session: PersistedSession | null | undefined,
+): TranscriptWord[] {
+  return session?.phase_c_recording?.transcript_words ?? [];
+}
+
+export function getPhaseCFullTranscript(
+  session: PersistedSession | null | undefined,
+): string {
+  return session?.phase_c_recording?.full_transcript ?? '';
+}
+
+export function getPhaseCFillerWordsFound(
+  session: PersistedSession | null | undefined,
+): string[] {
+  return session?.phase_c_recording?.filler_words_found ?? [];
+}
+
+export function getPhaseCPatterns(
+  session: PersistedSession | null | undefined,
+): PatternBadge[] {
+  return session?.phase_c_recording?.patterns ?? [];
+}
+
+export function getPhaseCWordCorrelations(
+  session: PersistedSession | null | undefined,
+): WordCorrelation[] {
+  return session?.phase_c_recording?.word_correlations ?? [];
 }
 
 export function getMediaUrl(downloadUrl: string): string {
