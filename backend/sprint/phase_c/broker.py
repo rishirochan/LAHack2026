@@ -14,6 +14,7 @@ from backend.sprint.phase_c.constants import (
     PACE_STABLE_DELTA,
     PACE_WPM_MAX,
     PACE_WPM_MIN,
+    STRONG_WORDS,
 )
 
 
@@ -290,3 +291,221 @@ def _dominant_chunk_emotion(chunk: dict[str, Any]) -> str | None:
     video = normalize_word(str(chunk.get("dominant_video_emotion") or ""))
     audio = normalize_word(str(chunk.get("dominant_audio_emotion") or ""))
     return video or audio or None
+
+
+def build_patterns(scorecard: dict[str, Any], merged_analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    """Generate Feedback Broker pattern badges from scorecard data."""
+
+    patterns: list[dict[str, Any]] = []
+    duration_seconds = float(scorecard.get("duration_seconds") or 0)
+    filler_count = int(scorecard.get("filler_word_count") or 0)
+    pacing = scorecard.get("pacing_drift") or {}
+    flatness = (scorecard.get("emotion_flags") or {}).get("emotional_flatness") or {}
+    nervousness = (scorecard.get("emotion_flags") or {}).get("nervousness_persistence") or {}
+    repetition = scorecard.get("repetition") or {}
+    chunks = list(merged_analysis.get("chunks") or [])
+
+    # Filler word frequency
+    if filler_count > 0 and duration_seconds > 0:
+        filler_interval = round(duration_seconds / filler_count)
+        severity = "critical" if filler_interval < 10 else "warning"
+        patterns.append({
+            "label": f"Filler words every {filler_interval} sec",
+            "severity": severity,
+            "category": "filler_frequency",
+        })
+
+    # Repetition
+    repeated_words = repetition.get("top_repeated_words") or []
+    repeated_phrases = repetition.get("top_repeated_phrases") or []
+    if repeated_words or repeated_phrases:
+        top = repeated_words[0] if repeated_words else repeated_phrases[0]
+        label_text = top.get("word") or top.get("phrase") or "phrase"
+        count = top.get("count", 0)
+        patterns.append({
+            "label": f'"{label_text}" repeated {count} times',
+            "severity": "warning",
+            "category": "repetition",
+        })
+
+    # Pacing drift
+    trend = pacing.get("trend", "stable")
+    if trend != "stable":
+        trend_label = "speeds up" if trend == "speeding_up" else "slows down" if trend == "slowing_down" else "drifts"
+        too_fast = pacing.get("too_fast_chunks", 0)
+        too_slow = pacing.get("too_slow_chunks", 0)
+        severity = "critical" if (too_fast + too_slow) > 2 else "warning"
+        patterns.append({
+            "label": f"Pacing {trend_label} ({too_fast + too_slow} out-of-band chunks)",
+            "severity": severity,
+            "category": "pacing_drift",
+        })
+
+    # Emotional flatness
+    if flatness.get("triggered"):
+        neutral_seconds = flatness.get("longest_neutral_run_seconds", 0)
+        # Find approx timestamp of longest neutral run
+        t_label = ""
+        current_run_ms = 0
+        run_start_ms = 0
+        for chunk in chunks:
+            emotion = _dominant_chunk_emotion(chunk)
+            chunk_duration = int(chunk.get("t_end", 0)) - int(chunk.get("t_start", 0))
+            if emotion == NEUTRAL_EMOTION:
+                if current_run_ms == 0:
+                    run_start_ms = int(chunk.get("t_start", 0))
+                current_run_ms += chunk_duration
+            else:
+                current_run_ms = 0
+        if run_start_ms > 0:
+            t_label = f" at {_format_timestamp_ms(run_start_ms)}"
+        patterns.append({
+            "label": f"Emotion flatness >{int(neutral_seconds)} sec{t_label}",
+            "severity": "warning",
+            "category": "emotional_flatness",
+        })
+
+    # Nervousness persistence
+    if nervousness.get("triggered"):
+        ratio_pct = round(float(nervousness.get("nervous_chunk_ratio", 0)) * 100)
+        patterns.append({
+            "label": f"Nervousness in {ratio_pct}% of chunks",
+            "severity": "critical",
+            "category": "nervousness",
+        })
+
+    # Positive patterns
+    avg_wpm = float(pacing.get("average_wpm", 0))
+    if PACE_WPM_MIN <= avg_wpm <= PACE_WPM_MAX and trend == "stable":
+        patterns.append({
+            "label": "Healthy, stable pacing",
+            "severity": "positive",
+            "category": "pacing_strength",
+        })
+
+    if filler_count == 0:
+        patterns.append({
+            "label": "Zero filler words detected",
+            "severity": "positive",
+            "category": "filler_strength",
+        })
+
+    if not nervousness.get("triggered") and not flatness.get("triggered"):
+        patterns.append({
+            "label": "Confident emotional delivery",
+            "severity": "positive",
+            "category": "emotion_strength",
+        })
+
+    # Informational: face-voice agreement
+    agreement_count = 0
+    total_chunks = len(chunks)
+    for chunk in chunks:
+        video_em = str(chunk.get("dominant_video_emotion") or "").lower()
+        audio_em = str(chunk.get("dominant_audio_emotion") or "").lower()
+        if video_em and audio_em and video_em == audio_em:
+            agreement_count += 1
+    if total_chunks > 0:
+        agreement_pct = round(agreement_count / total_chunks * 100)
+        patterns.append({
+            "label": f"Voice-face agreement {agreement_pct}%",
+            "severity": "informational",
+            "category": "face_voice_agreement",
+        })
+
+    return patterns
+
+
+def build_word_correlations(merged_analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build per-word timestamped insights correlating face and voice emotions."""
+
+    transcript_words = list(merged_analysis.get("transcript_words") or [])
+    chunks = list(merged_analysis.get("chunks") or [])
+    correlations: list[dict[str, Any]] = []
+
+    for word_entry in transcript_words:
+        word_text = str(word_entry.get("word") or "").strip()
+        start_ms = int(word_entry.get("start_ms") or 0)
+        if not word_text:
+            continue
+
+        # Find which chunk this word belongs to
+        matched_chunk = None
+        for chunk in chunks:
+            chunk_start = int(chunk.get("t_start", 0))
+            chunk_end = int(chunk.get("t_end", 0))
+            if chunk_start <= start_ms < chunk_end:
+                matched_chunk = chunk
+                break
+
+        if not matched_chunk:
+            continue
+
+        face_emotion = str(matched_chunk.get("dominant_video_emotion") or "").lower()
+        face_confidence = float(matched_chunk.get("video_confidence") or 0)
+        voice_emotion = str(matched_chunk.get("dominant_audio_emotion") or "").lower()
+        voice_confidence = float(matched_chunk.get("audio_confidence") or 0)
+
+        # Only include notable correlations
+        is_nervous = face_emotion in NERVOUS_EMOTIONS or voice_emotion in NERVOUS_EMOTIONS
+        confidence_mismatch = abs(face_confidence - voice_confidence) > 0.2 and face_emotion and voice_emotion
+        emotion_mismatch = face_emotion != voice_emotion and face_emotion and voice_emotion
+        is_strong_word = normalize_word(word_text) in STRONG_WORDS
+        is_filler = normalize_word(word_text) in FILLER_SINGLE_WORDS
+
+        if not (is_nervous or confidence_mismatch or emotion_mismatch or is_strong_word or is_filler):
+            continue
+
+        # Determine insight type and message
+        insight_type = "neutral"
+        message = ""
+
+        if emotion_mismatch and confidence_mismatch:
+            insight_type = "face_voice_mismatch"
+            message = (
+                f'Your face showed {face_emotion} ({round(face_confidence * 100)}%) '
+                f'but your voice read {voice_emotion} ({round(voice_confidence * 100)}%).'
+            )
+        elif is_nervous and face_emotion == voice_emotion:
+            insight_type = "face_voice_correlated"
+            message = (
+                f'Both face and voice confirmed {face_emotion} — '
+                f'{round(face_confidence * 100)}% and {round(voice_confidence * 100)}% confidence.'
+            )
+        elif is_nervous:
+            nervous_source = "face" if face_emotion in NERVOUS_EMOTIONS else "voice"
+            insight_type = "nervousness_signal"
+            nervous_em = face_emotion if face_emotion in NERVOUS_EMOTIONS else voice_emotion
+            message = f'Your {nervous_source} showed {nervous_em} at this moment.'
+        elif is_strong_word:
+            insight_type = "strength_moment"
+            if face_emotion and voice_emotion and face_emotion == voice_emotion:
+                message = f'Your face and voice both showed {face_emotion} — authentic delivery.'
+            else:
+                message = "Strong word usage detected."
+        elif is_filler:
+            insight_type = "filler_pattern"
+            message = f'Filler word detected — your {face_emotion or "expression"} delivery continued.'
+        else:
+            continue
+
+        correlations.append({
+            "word": word_text,
+            "timestamp_ms": start_ms,
+            "face_emotion": face_emotion or None,
+            "face_confidence": round(face_confidence, 2) if face_emotion else None,
+            "voice_emotion": voice_emotion or None,
+            "voice_confidence": round(voice_confidence, 2) if voice_emotion else None,
+            "insight_type": insight_type,
+            "message": message,
+        })
+
+    return correlations
+
+
+def _format_timestamp_ms(ms: int) -> str:
+    total_seconds = max(0, ms // 1000)
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    return f"{minutes}:{seconds:02d}"
+

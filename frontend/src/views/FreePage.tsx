@@ -5,10 +5,18 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Mic, RotateCcw, Square, Video } from 'lucide-react';
 
-import { EmotionTimeline } from '@/components/EmotionTimeline';
+
 import { PhaseCScorecard } from '@/components/PhaseCScorecard';
+import { WordAudit } from '@/components/WordAudit';
+import { PatternsDetected } from '@/components/PatternsDetected';
 import { usePhaseCSession } from '@/hooks/usePhaseCSession';
-import { getPhaseCMergedChunks, useSession } from '@/hooks/useSessions';
+import {
+  getPhaseCTranscriptWords,
+  getPhaseCFillerWordsFound,
+  getPhaseCPatterns,
+  getPhaseCWordCorrelations,
+  useSession,
+} from '@/hooks/useSessions';
 
 const focusOptions = [
   'Filler words',
@@ -54,7 +62,10 @@ export default function FreePage() {
     error: persistedSessionError,
     refetch: refetchPersistedSession,
   } = useSession(status === 'results' && sessionId ? sessionId : null);
-  const mergedChunks = getPhaseCMergedChunks(persistedSession);
+  const transcriptWords = getPhaseCTranscriptWords(persistedSession);
+  const fillerWordsFound = getPhaseCFillerWordsFound(persistedSession);
+  const patternsData = getPhaseCPatterns(persistedSession);
+  const wordCorrelations = getPhaseCWordCorrelations(persistedSession);
 
   const toggleFocus = (option: string) => {
     setActiveFocus((current) =>
@@ -459,7 +470,8 @@ export default function FreePage() {
             exit={{ opacity: 0, y: -16 }}
             className="space-y-6"
           >
-            <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+              {/* Left column: Video */}
               <div className="overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-sm">
                 <div className="border-b border-cream-200 px-6 py-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Recorded Session</p>
@@ -480,52 +492,42 @@ export default function FreePage() {
                       Recording preview unavailable
                     </div>
                   )}
-
-                  <div className="mt-5 grid gap-4">
-                    <div className="rounded-2xl bg-cream-50 px-4 py-4">
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Transcript</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        {transcriptPreview || 'Transcript preview unavailable for this session.'}
-                      </p>
-                    </div>
-                  </div>
                 </div>
               </div>
 
-              <div className="space-y-6">
-                <EmotionTimeline
-                  chunks={mergedChunks}
-                  loading={persistedSessionLoading}
-                  errorMessage={persistedSessionError}
+              {/* Right column: Transcript audit + action buttons */}
+              <div className="flex flex-col gap-6">
+                <WordAudit
+                  transcriptWords={transcriptWords}
+                  fillerWordsFound={fillerWordsFound}
                 />
-                {persistedSessionLoading && (
-                  <div className="inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
-                    <Loader2 size={16} className="animate-spin text-navy-500" />
-                    Loading persisted chunk analysis
-                  </div>
-                )}
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={resetAll}
+                    className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                  >
+                    <RotateCcw size={16} />
+                    Record Again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => router.push('/home')}
+                    className="rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
+                  >
+                    Back to Home
+                  </button>
+                </div>
               </div>
             </div>
 
             <PhaseCScorecard scorecard={scorecard} writtenSummary={writtenSummary} />
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={resetAll}
-                className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
-              >
-                <RotateCcw size={16} />
-                Record Again
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
-              >
-                Back to Home
-              </button>
-            </div>
+            <PatternsDetected
+              patterns={patternsData}
+              wordCorrelations={wordCorrelations}
+            />
           </motion.div>
         )}
       </AnimatePresence>

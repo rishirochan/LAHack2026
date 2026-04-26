@@ -2,18 +2,13 @@
 
 import { motion } from 'framer-motion';
 import {
-  AlertTriangle,
   Gauge,
   ListChecks,
   MessageSquareQuote,
-  Repeat2,
   Sparkles,
 } from 'lucide-react';
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
   ReferenceArea,
@@ -23,7 +18,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import type { PhaseCRepeatedPhrase, PhaseCRepeatedWord, PhaseCScorecard } from '@/lib/phase-c-api';
+import type { PhaseCScorecard } from '@/lib/phase-c-api';
 
 type PhaseCScorecardProps = {
   scorecard: PhaseCScorecard | null;
@@ -75,16 +70,6 @@ function formatTrend(trend: string) {
   }
 }
 
-function repeatedPills(
-  repeatedWords: PhaseCRepeatedWord[],
-  repeatedPhrases: PhaseCRepeatedPhrase[],
-): Array<{ label: string; count: number }> {
-  return [
-    ...repeatedWords.map((item) => ({ label: item.word, count: item.count })),
-    ...repeatedPhrases.map((item) => ({ label: item.phrase, count: item.count })),
-  ].slice(0, 6);
-}
-
 export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardProps) {
   if (!scorecard) {
     return (
@@ -102,20 +87,14 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
     chunk: `C${Number(chunk.chunk_index) + 1}`,
     wpm: Number(chunk.wpm ?? 0),
   }));
-  const fillerData = Object.entries(scorecard.filler_word_breakdown ?? {})
-    .map(([word, count]) => ({ word, count: Number(count) }))
-    .sort((left, right) => right.count - left.count);
-  const repeatedItems = repeatedPills(
-    scorecard.repetition?.top_repeated_words ?? [],
-    scorecard.repetition?.top_repeated_phrases ?? [],
-  );
   const flatness = scorecard.emotion_flags?.emotional_flatness;
   const nervousness = scorecard.emotion_flags?.nervousness_persistence;
   const targetBand = scorecard.pacing_drift?.target_band ?? [120, 170];
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {/* Row 1: Overall Score + Pacing */}
+      <div className="grid gap-4 md:grid-cols-2">
         <motion.div
           {...CARD_MOTION}
           className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
@@ -155,27 +134,13 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
             </Badge>
           </div>
         </motion.div>
-
-        <motion.div
-          {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.08 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
-        >
-          <div className="flex items-center gap-2 text-slate-700">
-            <AlertTriangle size={16} className="text-amber-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Filler Words</p>
-          </div>
-          <p className="mt-4 text-3xl font-semibold text-slate-900">{scorecard.filler_word_count}</p>
-          <p className="mt-1 text-sm text-slate-500">
-            {fillerData.length ? 'Most common fillers are charted below.' : 'No filler words were detected.'}
-          </p>
-        </motion.div>
       </div>
 
+      {/* Row 2: Pacing Trend chart + Emotion Flags */}
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <motion.div
           {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.12 }}
+          transition={{ duration: 0.32, delay: 0.08 }}
           className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
         >
           <div className="flex items-center justify-between gap-4">
@@ -216,73 +181,7 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
 
         <motion.div
           {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.16 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
-        >
-          <div className="flex items-center gap-2 text-slate-700">
-            <AlertTriangle size={16} className="text-amber-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Filler Breakdown</p>
-          </div>
-
-          {fillerData.length ? (
-            <ChartContainer
-              config={{ count: { label: 'Count', color: '#f0b44c' } }}
-              className="mt-6 h-52 w-full aspect-auto"
-            >
-              <BarChart data={fillerData} layout="vertical" margin={{ top: 0, right: 0, left: 12, bottom: 0 }}>
-                <CartesianGrid horizontal={false} stroke="#efe4d0" />
-                <XAxis axisLine={false} dataKey="count" tickLine={false} type="number" />
-                <YAxis axisLine={false} dataKey="word" tickLine={false} type="category" width={64} />
-                <ChartTooltip
-                  content={<ChartTooltipContent labelKey="count" formatter={(value) => `${value} hits`} />}
-                />
-                <Bar dataKey="count" radius={[10, 10, 10, 10]}>
-                  {fillerData.map((item) => (
-                    <Cell key={item.word} fill="#f0b44c" />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ChartContainer>
-          ) : (
-            <div className="mt-6 rounded-[24px] bg-emerald-50 px-4 py-5 text-sm text-emerald-800">
-              No filler words were counted in this recording.
-            </div>
-          )}
-        </motion.div>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <motion.div
-          {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.2 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
-        >
-          <div className="flex items-center gap-2 text-slate-700">
-            <Repeat2 size={16} className="text-navy-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Repetition</p>
-          </div>
-
-          {repeatedItems.length ? (
-            <div className="mt-5 flex flex-wrap gap-2">
-              {repeatedItems.map((item) => (
-                <Badge
-                  key={`${item.label}-${item.count}`}
-                  className="border-cream-200 bg-cream-50 px-3 py-1.5 text-slate-700"
-                >
-                  {item.label} x{item.count}
-                </Badge>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-5 text-sm leading-6 text-slate-500">
-              No repeated words or phrases stood out strongly enough to flag.
-            </p>
-          )}
-        </motion.div>
-
-        <motion.div
-          {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.24 }}
+          transition={{ duration: 0.32, delay: 0.12 }}
           className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">
@@ -313,10 +212,11 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
         </motion.div>
       </div>
 
+      {/* Row 3: Strengths & Improvements + AI Coaching Summary */}
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <motion.div
           {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.28 }}
+          transition={{ duration: 0.32, delay: 0.16 }}
           className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">
@@ -349,7 +249,7 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
 
         <motion.div
           {...CARD_MOTION}
-          transition={{ duration: 0.32, delay: 0.32 }}
+          transition={{ duration: 0.32, delay: 0.2 }}
           className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">

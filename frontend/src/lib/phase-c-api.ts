@@ -62,6 +62,31 @@ export interface PhaseCScorecard {
   improvement_areas: string[];
 }
 
+export interface TranscriptWord {
+  word: string;
+  start_ms: number;
+  end_ms: number;
+}
+
+export type PatternSeverity = 'critical' | 'warning' | 'positive' | 'informational';
+
+export interface PatternBadge {
+  label: string;
+  severity: PatternSeverity;
+  category: string;
+}
+
+export interface WordCorrelation {
+  word: string;
+  timestamp_ms: number;
+  face_emotion: string | null;
+  face_confidence: number | null;
+  voice_emotion: string | null;
+  voice_confidence: number | null;
+  insight_type: string;
+  message: string;
+}
+
 export interface PhaseCMergedAnalysisChunk {
   chunk_index: number;
   t_start: number;

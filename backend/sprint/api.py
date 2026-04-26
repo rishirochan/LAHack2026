@@ -219,6 +219,11 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
             "scorecard": None,
             "written_summary": "",
             "merged_chunks": [],
+            "full_transcript": "",
+            "transcript_words": [],
+            "filler_words_found": [],
+            "patterns": [],
+            "word_correlations": [],
         }
 
     completed_recording = raw_state.get("completed_recording")
@@ -227,18 +232,51 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
             "scorecard": None,
             "written_summary": "",
             "merged_chunks": [],
+            "full_transcript": "",
+            "transcript_words": [],
+            "filler_words_found": [],
+            "patterns": [],
+            "word_correlations": [],
         }
 
     merged_analysis = completed_recording.get("merged_analysis")
     merged_chunks = merged_analysis.get("chunks") if isinstance(merged_analysis, dict) else []
+    scorecard = completed_recording.get("scorecard") if isinstance(completed_recording.get("scorecard"), dict) else None
+
+    # Feature 3: word audit data
+    full_transcript = ""
+    transcript_words: list[dict[str, object]] = []
+    filler_words_found: list[str] = []
+    if isinstance(merged_analysis, dict):
+        full_transcript = str(merged_analysis.get("full_transcript") or "")
+        transcript_words = merged_analysis.get("transcript_words") or []
+
+    if isinstance(scorecard, dict):
+        filler_breakdown = scorecard.get("filler_word_breakdown")
+        if isinstance(filler_breakdown, dict):
+            filler_words_found = list(filler_breakdown.keys())
+
+    # Feature 5: patterns and word correlations
+    patterns: list[dict[str, object]] = []
+    word_correlations: list[dict[str, object]] = []
+    if isinstance(scorecard, dict) and isinstance(merged_analysis, dict):
+        from backend.sprint.phase_c.broker import build_patterns, build_word_correlations
+        patterns = build_patterns(scorecard, merged_analysis)
+        word_correlations = build_word_correlations(merged_analysis)
 
     return {
-        "scorecard": completed_recording.get("scorecard") if isinstance(completed_recording.get("scorecard"), dict) else None,
+        "scorecard": scorecard,
         "written_summary": completed_recording.get("written_summary")
         if isinstance(completed_recording.get("written_summary"), str)
         else "",
         "merged_chunks": merged_chunks if isinstance(merged_chunks, list) else [],
+        "full_transcript": full_transcript,
+        "transcript_words": transcript_words,
+        "filler_words_found": filler_words_found,
+        "patterns": patterns,
+        "word_correlations": word_correlations,
     }
+
 
 
 def _to_replay_session(session: dict) -> dict[str, object]:
