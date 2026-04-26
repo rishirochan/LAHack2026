@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 import {
   Gauge,
   ListChecks,
@@ -64,7 +65,7 @@ function formatTrend(trend: string) {
     case 'slowing_down':
       return 'Slowing down';
     case 'stable':
-      return 'Stable';
+      return 'Consistent';
     default:
       return 'Mixed';
   }
@@ -73,8 +74,8 @@ function formatTrend(trend: string) {
 export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardProps) {
   if (!scorecard) {
     return (
-      <div className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm">
-        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Scorecard</p>
+      <div className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm">
+        <p className="text-xs uppercase tracking-widest text-slate-400">Scorecard</p>
         <p className="mt-4 text-sm leading-6 text-slate-500">
           Scorecard data is not available for this session yet.
         </p>
@@ -97,30 +98,30 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
       <div className="grid gap-4 md:grid-cols-2">
         <motion.div
           {...CARD_MOTION}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+          className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
         >
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Overall Score</p>
+          <p className="text-xs uppercase tracking-widest text-slate-400">Overall Score</p>
           <div className="mt-4 flex items-end justify-between gap-4">
             <div>
-              <p className={`font-['Playfair_Display'] text-6xl font-semibold ${scoreTone.valueClassName}`}>
+              <p className={`font-serif text-6xl font-semibold ${scoreTone.valueClassName}`}>
                 {scorecard.overall_score}
               </p>
               <p className="mt-2 text-sm text-slate-500">
                 {scorecard.duration_seconds.toFixed(1)} seconds analyzed
               </p>
             </div>
-            <Badge className={scoreTone.badgeClassName}>Broker score</Badge>
+            <Badge className={scoreTone.badgeClassName}>Delivery score</Badge>
           </div>
         </motion.div>
 
         <motion.div
           {...CARD_MOTION}
           transition={{ duration: 0.32, delay: 0.04 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+          className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">
             <Gauge size={16} className="text-navy-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Pacing</p>
+            <p className="text-xs uppercase tracking-widest text-slate-400">Pacing</p>
           </div>
           <div className="mt-4 flex items-center justify-between gap-4">
             <div>
@@ -141,17 +142,17 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
         <motion.div
           {...CARD_MOTION}
           transition={{ duration: 0.32, delay: 0.08 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+          className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
         >
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Pacing Trend</p>
-              <h3 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+              <p className="text-xs uppercase tracking-widest text-slate-400">Pacing Trend</p>
+              <h3 className="mt-2 font-serif text-2xl font-semibold text-slate-900">
                 WPM across chunks
               </h3>
             </div>
-            <div className="rounded-full bg-cream-100 px-4 py-2 text-xs font-medium text-slate-600">
-              Fast: {scorecard.pacing_drift.too_fast_chunks} | Slow: {scorecard.pacing_drift.too_slow_chunks}
+            <div className="rounded-lg bg-cream-200 px-3 py-1.5 text-xs font-medium text-slate-600">
+              Fast: {scorecard.pacing_drift.too_fast_chunks} · Slow: {scorecard.pacing_drift.too_slow_chunks}
             </div>
           </div>
 
@@ -182,15 +183,15 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
         <motion.div
           {...CARD_MOTION}
           transition={{ duration: 0.32, delay: 0.12 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+          className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">
-            <Sparkles size={16} className="text-amber-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Emotion Flags</p>
+            <Sparkles size={16} className="text-teal-500" />
+            <p className="text-xs uppercase tracking-widest text-slate-400">Emotion Flags</p>
           </div>
 
           <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <div className="rounded-[24px] bg-cream-50 p-4">
+            <div className="rounded-xl bg-cream-200 p-4">
               <p className="text-sm font-semibold text-slate-900">Flatness</p>
               <p className="mt-2 text-sm text-slate-600">
                 {flatness?.triggered ? 'Triggered' : 'Not triggered'}
@@ -199,7 +200,7 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
                 Longest neutral run: {Number(flatness?.longest_neutral_run_seconds ?? 0).toFixed(1)}s
               </p>
             </div>
-            <div className="rounded-[24px] bg-cream-50 p-4">
+            <div className="rounded-xl bg-cream-200 p-4">
               <p className="text-sm font-semibold text-slate-900">Nervousness</p>
               <p className="mt-2 text-sm text-slate-600">
                 {nervousness?.triggered ? 'Triggered' : 'Not triggered'}
@@ -217,18 +218,18 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
         <motion.div
           {...CARD_MOTION}
           transition={{ duration: 0.32, delay: 0.16 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+          className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">
             <ListChecks size={16} className="text-emerald-600" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Strengths & Improvements</p>
+            <p className="text-xs uppercase tracking-widest text-slate-400">Strengths & Improvements</p>
           </div>
           <div className="mt-5 grid gap-5 md:grid-cols-2">
             <div>
               <p className="text-sm font-semibold text-slate-900">Strengths</p>
               <div className="mt-3 space-y-2">
                 {scorecard.strengths.map((item) => (
-                  <div key={item} className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  <div key={item} className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                     {item}
                   </div>
                 ))}
@@ -238,7 +239,7 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
               <p className="text-sm font-semibold text-slate-900">Improvements</p>
               <div className="mt-3 space-y-2">
                 {scorecard.improvement_areas.map((item) => (
-                  <div key={item} className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <div key={item} className="rounded-xl bg-cream-200 px-4 py-3 text-sm text-slate-700">
                     {item}
                   </div>
                 ))}
@@ -250,16 +251,36 @@ export function PhaseCScorecard({ scorecard, writtenSummary }: PhaseCScorecardPr
         <motion.div
           {...CARD_MOTION}
           transition={{ duration: 0.32, delay: 0.2 }}
-          className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+          className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
         >
           <div className="flex items-center gap-2 text-slate-700">
             <MessageSquareQuote size={16} className="text-navy-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">AI Coaching Summary</p>
+            <p className="text-xs uppercase tracking-widest text-slate-400">AI Coaching Summary</p>
           </div>
-          <div className="mt-5 rounded-[24px] border border-cream-200 bg-[linear-gradient(135deg,#fff9ee_0%,#fdf3dd_100%)] p-5">
-            <p className="text-sm leading-7 text-slate-700">
+          <div className="mt-5 rounded-xl border border-cream-300 bg-[linear-gradient(140deg,#fffdf7_0%,#f8f2e2_55%,#eef4ff_100%)] p-5">
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => (
+                  <p className="text-sm leading-7 text-slate-700 [&:not(:first-child)]:mt-4">{children}</p>
+                ),
+                strong: ({ children }) => (
+                  <strong className="font-semibold text-slate-900">{children}</strong>
+                ),
+                ul: ({ children }) => (
+                  <ul className="mt-4 space-y-2 pl-5 text-sm leading-7 text-slate-700 marker:text-slate-400">
+                    {children}
+                  </ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="mt-4 space-y-2 pl-5 text-sm leading-7 text-slate-700 marker:font-medium marker:text-slate-500">
+                    {children}
+                  </ol>
+                ),
+                li: ({ children }) => <li className="pl-1">{children}</li>,
+              }}
+            >
               {writtenSummary || 'No written summary was returned for this session.'}
-            </p>
+            </ReactMarkdown>
           </div>
         </motion.div>
       </div>

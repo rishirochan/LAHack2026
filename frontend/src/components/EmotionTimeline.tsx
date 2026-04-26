@@ -135,7 +135,7 @@ export function EmotionTimeline({ chunks, loading = false, errorMessage = '' }: 
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Emotion Timeline</p>
-          <h3 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+          <h3 className="mt-2 font-serif text-2xl font-semibold text-slate-900">
             Chunk-by-chunk delivery shifts
           </h3>
         </div>

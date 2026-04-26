@@ -117,7 +117,7 @@ export default function LoginModal({
             <div className="px-8 pt-10 pb-8">
               {/* Header */}
               <div className="text-center mb-8">
-                <h2 className="font-['Playfair_Display'] text-[28px] font-semibold text-slate-900 leading-tight">
+                <h2 className="font-serif text-[28px] font-semibold text-slate-900 leading-tight">
                   {isSignUp ? 'Create your account' : 'Sign in'}
                 </h2>
                 <p className="mt-2 text-sm text-slate-500">

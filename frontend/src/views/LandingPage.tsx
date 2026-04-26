@@ -88,7 +88,7 @@ export default function LandingPage() {
           <div className="w-9 h-9 rounded-xl bg-navy-500 flex items-center justify-center">
             <Sparkles size={18} className="text-white" />
           </div>
-          <span className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+          <span className="font-serif text-2xl font-semibold text-slate-900">
             Clarity
           </span>
         </motion.div>
@@ -150,7 +150,7 @@ export default function LandingPage() {
           variants={fadeUp}
           initial="hidden"
           animate="visible"
-          className="font-['Playfair_Display'] text-5xl md:text-6xl lg:text-7xl font-semibold text-slate-900 max-w-4xl leading-tight mb-6"
+          className="font-serif text-5xl md:text-6xl lg:text-7xl font-semibold text-slate-900 max-w-4xl leading-tight mb-6"
         >
           Speak with intention,
           <br />
@@ -220,7 +220,7 @@ export default function LandingPage() {
             transition={{ duration: 0.7 }}
             className="text-center mb-16"
           >
-            <h2 className="font-['Playfair_Display'] text-4xl font-semibold text-slate-900 mb-4">
+            <h2 className="font-serif text-4xl font-semibold text-slate-900 mb-4">
               Three ways to practice
             </h2>
             <p className="text-slate-500 text-lg">
@@ -267,7 +267,7 @@ export default function LandingPage() {
                   <div className="w-10 h-10 rounded-xl bg-navy-500/10 flex items-center justify-center mb-4">
                     <feature.icon size={22} className="text-navy-500" />
                   </div>
-                  <h3 className="font-['Playfair_Display'] text-xl font-semibold text-slate-900 mb-2">
+                  <h3 className="font-serif text-xl font-semibold text-slate-900 mb-2">
                     {feature.title}
                   </h3>
                   <p className="text-sm text-slate-500 leading-relaxed">
@@ -287,7 +287,7 @@ export default function LandingPage() {
             <div className="w-7 h-7 rounded-lg bg-navy-500 flex items-center justify-center">
               <Sparkles size={14} className="text-white" />
             </div>
-            <span className="font-['Playfair_Display'] text-lg font-semibold text-slate-900">
+            <span className="font-serif text-lg font-semibold text-slate-900">
               Clarity
             </span>
           </div>

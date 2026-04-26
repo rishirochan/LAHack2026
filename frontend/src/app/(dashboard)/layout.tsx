@@ -11,7 +11,7 @@ function DashboardFrame({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar />
-      <main className={`min-h-screen p-8 transition-all duration-300 ${expanded ? 'ml-[240px]' : 'ml-[88px]'}`}>
+      <main className={`min-h-screen py-6 px-6 transition-all duration-300 ${expanded ? 'ml-[240px]' : 'ml-[88px]'}`}>
         {children}
       </main>
     </>

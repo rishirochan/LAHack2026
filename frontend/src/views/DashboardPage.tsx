@@ -44,7 +44,7 @@ export default function DashboardPage() {
         className="mb-10"
       >
         <h1
-          className="mb-1 font-['Playfair_Display'] text-2xl font-semibold text-slate-900"
+          className="mb-1 font-serif text-2xl font-semibold text-slate-900"
         >
           Good morning, Jordan
         </h1>
@@ -81,7 +81,7 @@ export default function DashboardPage() {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.4 }}
       >
-        <h2 className="font-['Playfair_Display'] text-xl font-semibold text-slate-900 mb-4">
+        <h2 className="font-serif text-xl font-semibold text-slate-900 mb-4">
           Recent sessions
         </h2>
         <div className="bg-white rounded-2xl border border-cream-300 overflow-hidden shadow-sm">

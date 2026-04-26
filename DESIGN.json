@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-26T00:00:00.000Z",
+  "title": "Design System: Clarity",
+  "extensions": {
+    "colorMeta": {
+      "navy-primary":       { "role": "primary",   "displayName": "Coaching Navy",      "canonical": "oklch(28% 0.09 252)",  "tonalRamp": ["#0d1829","#162240","#243763","#2e4a82","#3d63a8","#6689c4","#a0b8dc","#d5e1f0"] },
+      "navy-interactive":   { "role": "primary",   "displayName": "Interactive Navy",   "canonical": "oklch(34% 0.1 252)",   "tonalRamp": ["#162240","#243763","#2e4a82","#3a5fa0","#5079be","#7a9ed1","#adc3e4","#dce8f4"] },
+      "navy-deep":          { "role": "primary",   "displayName": "Deep Navy",          "canonical": "oklch(18% 0.07 252)",  "tonalRamp": ["#080f1c","#0d1829","#162240","#243763","#2e4a82","#4d6bab","#8daacf","#ccd9eb"] },
+      "teal-conversation":  { "role": "secondary", "displayName": "Deep Ocean Teal",    "canonical": "oklch(36% 0.075 200)", "tonalRamp": ["#04262c","#0a3d47","#0d5c6b","#107d90","#139eb6","#4bbecf","#8edae6","#c8f0f6"] },
+      "amber-free":         { "role": "tertiary",  "displayName": "Warm Amber",         "canonical": "oklch(48% 0.14 60)",   "tonalRamp": ["#5c2900","#7c3700","#b45309","#d97706","#f59e0b","#fbbf24","#fde68a","#fef9e7"] },
+      "cream-base":         { "role": "neutral",   "displayName": "Warm Cream Base",    "canonical": "oklch(97% 0.012 80)",  "tonalRamp": ["#c4b89a","#d4c9aa","#EDE3CC","#F5EFE0","#FAF7F0","#FDFBF7","#fefcf8","#ffffff"] },
+      "cream-surface":      { "role": "neutral",   "displayName": "Cream Surface",      "canonical": "oklch(98.5% 0.008 80)","tonalRamp": ["#ccc0a6","#d9ccb2","#ede0c8","#f3ecdc","#FDFBF7","#fefdf9","#fffefb","#ffffff"] },
+      "cream-border":       { "role": "neutral",   "displayName": "Cream Border",       "canonical": "oklch(90% 0.025 78)",  "tonalRamp": ["#a8936c","#bea97f","#d4bc93","#EDE3CC","#f5edda","#faf4e8","#fdfaf2","#fffefb"] },
+      "ink-primary":        { "role": "neutral",   "displayName": "Ink Primary",        "canonical": "oklch(14% 0.025 250)", "tonalRamp": ["#0f172a","#1e2d45","#2d4260","#3d587c","#4d6e98","#6b8ab5","#a3b8d2","#d5e2ef"] },
+      "ink-secondary":      { "role": "neutral",   "displayName": "Ink Secondary",      "canonical": "oklch(42% 0.04 240)",  "tonalRamp": ["#1e293b","#334155","#475569","#64748b","#94a3b8","#cbd5e1","#e2e8f0","#f8fafc"] },
+      "ink-tertiary":       { "role": "neutral",   "displayName": "Ink Tertiary",       "canonical": "oklch(64% 0.03 240)",  "tonalRamp": ["#475569","#64748b","#94a3b8","#b2bfce","#cbd5e1","#dde4ec","#eef2f7","#f8fafc"] },
+      "destructive":        { "role": "error",     "displayName": "Error Red",          "canonical": "oklch(56% 0.2 22)",    "tonalRamp": ["#7f1d1d","#991b1b","#b91c1c","#dc2626","#f04438","#f97066","#fda29b","#fee4e2"] }
+    },
+    "typographyMeta": {
+      "display":  { "displayName": "Display",  "purpose": "Landing page hero, major session onboarding. Lora only. Use sparingly — one or two elements per screen max." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles, scorecard category headings, major section breaks. Lora." },
+      "title":    { "displayName": "Title",    "purpose": "Card headings, modal titles, sidebar group titles. Plus Jakarta Sans 600." },
+      "body":     { "displayName": "Body",     "purpose": "Feedback paragraphs, critique text, descriptions. Plus Jakarta Sans 400. Max 70ch." },
+      "label":    { "displayName": "Label",    "purpose": "Section dividers, mode tags, status chips, nav sublabels. Plus Jakarta Sans 500 uppercase with tracking." }
+    },
+    "shadows": [
+      { "name": "hover-lift",  "value": "0 2px 8px 0 rgba(15, 23, 42, 0.08)",                                               "purpose": "Interactive practice-mode cards on hover only. Signals navigation target." },
+      { "name": "popover",     "value": "0 4px 20px 0 rgba(15, 23, 42, 0.12), 0 1px 3px 0 rgba(15, 23, 42, 0.06)",         "purpose": "Dropdowns, popovers, command palettes." },
+      { "name": "dialog",      "value": "0 8px 40px 0 rgba(15, 23, 42, 0.16)",                                              "purpose": "Full modals and sheet panels. Heaviest shadow — full context interruption." }
+    ],
+    "motion": [
+      { "name": "ease-out-quart", "value": "cubic-bezier(0.25, 1, 0.5, 1)",   "purpose": "Standard easing for all state transitions. Exit animations." },
+      { "name": "ease-out-expo",  "value": "cubic-bezier(0.16, 1, 0.3, 1)",   "purpose": "Page entrances, major panel reveals." },
+      { "name": "duration-fast",  "value": "150ms",                            "purpose": "Button hover, icon swaps." },
+      { "name": "duration-base",  "value": "250ms",                            "purpose": "Card hover, panel slide-in." },
+      { "name": "duration-slow",  "value": "500ms",                            "purpose": "Page entrance animations, scorecard reveals." }
+    ],
+    "breakpoints": [
+      { "name": "sm",  "value": "640px" },
+      { "name": "md",  "value": "768px" },
+      { "name": "lg",  "value": "1024px" },
+      { "name": "xl",  "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action. Launch session, submit, proceed.",
+      "html": "<button class=\"ds-btn-primary\">Start Practice</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #243763; color: #FDFBF7; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; line-height: 1; letter-spacing: normal; padding: 8px 20px; height: 36px; border: none; border-radius: 8px; cursor: pointer; transition: background 150ms cubic-bezier(0.25, 1, 0.5, 1), transform 150ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-btn-primary:hover { background: #2e4a82; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(26, 63, 181, 0.4); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:disabled { opacity: 0.5; pointer-events: none; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action. Cancel, back, alternate path.",
+      "html": "<button class=\"ds-btn-outline\">View Replay</button>",
+      "css": ".ds-btn-outline { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: #0f172a; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; line-height: 1; padding: 8px 20px; height: 36px; border: 1px solid #EDE3CC; border-radius: 8px; cursor: pointer; transition: background 150ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-btn-outline:hover { background: #F5EFE0; } .ds-btn-outline:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(26, 63, 181, 0.4); } .ds-btn-outline:disabled { opacity: 0.5; pointer-events: none; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Tertiary action. Sidebar items, inline controls.",
+      "html": "<button class=\"ds-btn-ghost\">Settings</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: #475569; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.9375rem; font-weight: 500; line-height: 1; padding: 8px 12px; height: 36px; border: none; border-radius: 8px; cursor: pointer; transition: background 150ms cubic-bezier(0.25, 1, 0.5, 1), color 150ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-btn-ghost:hover { background: #F5EFE0; color: #0f172a; } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(26, 63, 181, 0.4); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "Standard text field. Form entries, search.",
+      "html": "<div class=\"ds-input-wrapper\"><input class=\"ds-input\" type=\"text\" placeholder=\"Describe your scenario…\" /></div>",
+      "css": ".ds-input-wrapper { position: relative; width: 100%; } .ds-input { width: 100%; height: 36px; padding: 0 12px; background: transparent; border: 1px solid #EDE3CC; border-radius: 8px; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.9375rem; font-weight: 400; color: #0f172a; outline: none; transition: border-color 150ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-input::placeholder { color: #94a3b8; } .ds-input:focus-visible { border-color: #2e4a82; box-shadow: 0 0 0 3px rgba(45, 91, 227, 0.2); } .ds-input:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Mode Selector Card",
+      "kind": "card",
+      "refersTo": "card-default",
+      "description": "Practice mode entry point. Interactive navigation target from the dashboard.",
+      "html": "<button class=\"ds-mode-card\">\n  <span class=\"ds-mode-icon ds-mode-icon--sprint\">\n    <svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"/></svg>\n  </span>\n  <div class=\"ds-mode-content\">\n    <p class=\"ds-mode-title\">Emotion Sprint</p>\n    <p class=\"ds-mode-desc\">Practice delivering lines in a specific emotional tone</p>\n  </div>\n  <svg class=\"ds-mode-arrow\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg>\n</button>",
+      "css": ".ds-mode-card { width: 100%; display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: #FDFBF7; border: 1px solid #EDE3CC; border-radius: 14px; cursor: pointer; text-align: left; transition: box-shadow 200ms cubic-bezier(0.25, 1, 0.5, 1), transform 200ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-mode-card:hover { box-shadow: 0 2px 8px 0 rgba(15, 23, 42, 0.08); transform: translateY(-1px); } .ds-mode-icon { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; } .ds-mode-icon--sprint { background: rgba(26, 63, 181, 0.1); color: #243763; } .ds-mode-icon--conversation { background: rgba(13, 92, 107, 0.1); color: #0d5c6b; } .ds-mode-icon--free { background: rgba(180, 83, 9, 0.1); color: #b45309; } .ds-mode-content { flex: 1; min-width: 0; } .ds-mode-title { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; color: #0f172a; margin: 0 0 4px; } .ds-mode-desc { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.8125rem; font-weight: 400; color: #475569; margin: 0; line-height: 1.5; } .ds-mode-arrow { color: #94a3b8; flex-shrink: 0; transition: color 200ms, transform 200ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-mode-card:hover .ds-mode-arrow { color: #475569; transform: translateX(2px); }"
+    },
+    {
+      "name": "Score Chip",
+      "kind": "chip",
+      "description": "Semantic score indicator used in scorecards and feedback views.",
+      "html": "<span class=\"ds-chip ds-chip--positive\">Good</span><span class=\"ds-chip ds-chip--neutral\">Fair</span><span class=\"ds-chip ds-chip--critical\">Needs Work</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 9999px; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.4; } .ds-chip--positive { background: rgba(26, 63, 181, 0.08); color: #243763; } .ds-chip--neutral { background: #F5EFE0; color: #475569; } .ds-chip--critical { background: rgba(240, 68, 56, 0.08); color: #b91c1c; }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "description": "Primary sidebar navigation link. Default, hover, and active states.",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\" class=\"ds-nav-item ds-nav-item--active\">\n  <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/></svg>\n  <span>Home</span>\n</a><a href=\"#\" class=\"ds-nav-item\">\n  <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><polygon points=\"10 8 16 12 10 16 10 8\"/></svg>\n  <span>Replays</span>\n</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; padding: 8px; } .ds-nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 0.9375rem; font-weight: 500; color: #475569; text-decoration: none; transition: background 150ms cubic-bezier(0.25, 1, 0.5, 1), color 150ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-nav-item:hover { background: #F5EFE0; color: #0f172a; } .ds-nav-item--active { background: #F5EFE0; color: #0f172a; font-weight: 600; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Coaching Room",
+    "overview": "Clarity lives in the space between a serious training environment and a considered, calm one. The visual system is designed for a person who is already focused — running drills before a high-stakes conversation. It should lower their cortisol, not compete for their attention.\n\nThe typographic system grounds the interface in quiet authority. Lora carries headers with editorial warmth, never theatrical. Plus Jakarta Sans handles body and UI text with humanist confidence.\n\nColor is restrained. The cream and warm-white backgrounds dominate; the navy is precise and confident; the mode accent colors distinguish contexts without decorating them.",
+    "keyCharacteristics": [
+      "Warm cream surface, not cold white",
+      "Serif display type that reads as editorial calm, not academic formality",
+      "Mode accent colors that identify context at a glance",
+      "Flat-by-default elevation; shadow appears as functional state change only",
+      "Spacing that varies deliberately — denser in analysis views, more open in practice flows"
+    ],
+    "rules": [
+      { "name": "The One Accent Rule",       "body": "Navy, teal, and amber are semantic identifiers, not decorative fills. Combined, they cover less than 15% of any given screen.",                                              "section": "colors" },
+      { "name": "The Cream Purity Rule",     "body": "Never apply a colored tint to the cream backgrounds. The warmth of #FAF7F0 is the warmth of the brand. No gradients or colored overlays on top of it.",           "section": "colors" },
+      { "name": "The Serif Gate Rule",       "body": "Lora is reserved for headlines and display text only. Never use it for body copy, labels, UI controls, or interactive elements.",                        "section": "typography" },
+      { "name": "The Weight Floor Rule",     "body": "Plus Jakarta Sans 400 is the minimum weight for any readable text. Never use 300 or below.",                                                                         "section": "typography" },
+      { "name": "The Flat-By-Default Rule",  "body": "A static surface has no shadow. Shadows are responses to state — hover, open, or overlay — not decoration. If a shadow exists on a card at rest, it is wrong.",    "section": "elevation" }
+    ],
+    "dos": [
+      "Do use Lora for all headlines and page titles.",
+      "Do keep cream-base (#FAF7F0) as the dominant surface.",
+      "Do use the mode accent colors exclusively on icons and small semantic labels.",
+      "Do deepen shadows only in response to state: hover, open, or overlay.",
+      "Do let scorecard and feedback views breathe — wider line-heights, more vertical space.",
+      "Do keep practice flows distraction-free.",
+      "Do cap all body text at 70ch line length.",
+      "Do use uppercase Label typography for wayfinding only."
+    ],
+    "donts": [
+      "Don't use Lora for body copy, UI controls, or interactive elements.",
+      "Don't use purple, violet, or gradient fills anywhere in the UI.",
+      "Don't add streaks, badges, confetti, or gamified progress indicators.",
+      "Don't use colored side-stripe borders (border-left or border-right greater than 1px as a colored accent).",
+      "Don't use gradient text (background-clip: text with a gradient).",
+      "Don't use glassmorphism or backdrop-blur decoratively.",
+      "Don't use the hero-metric template (big number, small label, gradient accent).",
+      "Don't design identical card grids.",
+      "Don't apply neon accents, high-chroma brights, or dark backgrounds.",
+      "Don't let the cream backgrounds be mistaken for white — use #FDFBF7, not #ffffff.",
+      "Don't use Inter or Playfair Display — they are the replaced fonts."
+    ]
+  }
+}

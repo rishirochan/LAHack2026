@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Mic, RotateCcw, Square, Video } from 'lucide-react';
+import { ChevronDown, Loader2, Mic, RotateCcw, Square, Video } from 'lucide-react';
 
 
 import { PhaseCScorecard } from '@/components/PhaseCScorecard';
@@ -139,15 +139,6 @@ export default function FreePage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="mb-6">
-        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-          Free Speaking
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Record one uninterrupted speaking session and get a full broker scorecard.
-        </p>
-      </div>
-
       <AnimatePresence mode="wait">
         {showSetup && (
           <motion.div
@@ -155,36 +146,86 @@ export default function FreePage() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
-            className="space-y-6"
+            className="space-y-8"
           >
-            <div className="grid gap-6 lg:grid-cols-[1.25fr_0.95fr]">
-              <div className="rounded-2xl border border-cream-300 bg-white p-8 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                  Session Setup
-                </p>
-                <h2 className="mt-3 font-['Playfair_Display'] text-3xl font-semibold text-slate-900">
-                  Speak freely for up to 45 seconds
-                </h2>
-                <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500">
-                  Phase C scores pacing, filler words, repetition, and emotional steadiness across
-                  five-second chunks. Start the camera, choose the delivery cues you want to keep in
-                  mind, and talk through any topic you want.
-                </p>
+            <div className="mb-10 pt-8 text-center">
+              <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-navy-500">
+                Free Speaking
+              </p>
+              <h1 className="font-serif text-[3rem] font-semibold leading-[1.1] text-slate-900 sm:text-[3.5rem]">
+                Bring your thoughts.
+              </h1>
+              <p className="mx-auto mt-5 max-w-md text-base leading-relaxed text-slate-500">
+                Record up to 45 seconds. We'll score your pacing, filler words, repetition, and emotional arc.
+              </p>
+            </div>
 
-                <div className="mt-8">
-                  <p className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-                    Focus Areas
+            <div className="rounded-2xl border border-cream-300 bg-cream-50 p-4 shadow-sm">
+              <div className="flex">
+                {/* Left: What happens — inset gradient tile */}
+                <div className="flex flex-1 flex-col rounded-xl bg-[linear-gradient(135deg,#0f172a_0%,#19345f_55%,#f4c978_140%)] p-7">
+                  <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-white/50">
+                    What happens
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex-1 space-y-5">
+                    <div className="border-b border-white/10 pb-5">
+                      <p className="text-sm font-semibold text-white">Live recording</p>
+                      <p className="mt-1 text-sm leading-6 text-white/65">
+                        Camera preview, waveform, and five-second chunk uploads run in parallel.
+                      </p>
+                    </div>
+                    <div className="border-b border-white/10 pb-5">
+                      <p className="text-sm font-semibold text-white">Background analysis</p>
+                      <p className="mt-1 text-sm leading-6 text-white/65">
+                        Chunks are scored while the full audio is transcribed.
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-white">Delivery scorecard</p>
+                      <p className="mt-1 text-sm leading-6 text-white/65">
+                        Pacing, filler words, repetition flags, and a coaching summary.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void beginSession()}
+                    className="mt-8 inline-flex items-center gap-2 rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-cream-50"
+                  >
+                    <Video size={15} />
+                    Start session
+                  </button>
+                </div>
+
+                {/* Divider */}
+                <div className="mx-6 w-px self-stretch bg-cream-300" />
+
+                {/* Right: Focus areas — on the cream base */}
+                <div className="w-40 shrink-0 py-5 pr-3">
+                  <div className="mb-5 flex items-baseline justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Focus areas
+                    </p>
+                    {activeFocus.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveFocus([])}
+                        className="text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-600"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
                     {focusOptions.map((option) => (
                       <button
                         key={option}
                         type="button"
                         onClick={() => toggleFocus(option)}
-                        className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                        className={`w-full rounded-lg px-4 py-2 text-left text-sm font-medium transition-all duration-150 ${
                           activeFocus.includes(option)
-                            ? 'bg-navy-500 text-white shadow-sm'
-                            : 'bg-cream-100 text-slate-600 hover:bg-cream-200'
+                            ? 'bg-amber-700 text-white'
+                            : 'border border-cream-300 bg-cream-100 text-slate-600 hover:border-cream-400 hover:bg-cream-200'
                         }`}
                       >
                         {option}
@@ -192,39 +233,6 @@ export default function FreePage() {
                     ))}
                   </div>
                 </div>
-              </div>
-
-              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-[linear-gradient(135deg,#0f172a_0%,#19345f_55%,#f4c978_140%)] p-8 text-white shadow-sm">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/65">What to expect</p>
-                <div className="mt-6 grid gap-4">
-                  <div className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm">
-                    <p className="text-sm font-semibold">Live recording</p>
-                    <p className="mt-1 text-sm text-white/75">
-                      Camera preview, microphone waveform, and automatic five-second chunk uploads.
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm">
-                    <p className="text-sm font-semibold">Realtime processing</p>
-                    <p className="mt-1 text-sm text-white/75">
-                      Chunks are analyzed in the background while the full recording is transcribed.
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm">
-                    <p className="text-sm font-semibold">Final output</p>
-                    <p className="mt-1 text-sm text-white/75">
-                      You get an overall score, pacing analysis, repetition flags, and a coaching summary.
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void beginSession()}
-                  className="mt-8 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 transition-transform hover:-translate-y-0.5"
-                >
-                  <Video size={16} />
-                  Start Session
-                </button>
               </div>
             </div>
           </motion.div>
@@ -238,22 +246,13 @@ export default function FreePage() {
             exit={{ opacity: 0, y: -16 }}
             className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]"
           >
-            <div className="overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-sm">
+            <div className="overflow-hidden rounded-2xl border border-cream-300 bg-cream-50 shadow-sm">
               <div className="border-b border-cream-200 px-6 py-4">
                 <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Camera Feed</p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {isPreparing
-                        ? 'Turning on your camera and finishing session setup…'
-                        : isRecording
-                          ? 'Live preview while the session is recording.'
-                          : isBusy
-                            ? 'Your recording has stopped. Processing is underway.'
-                            : 'When you are ready, click Start recording below. Your camera stays on for preview.'}
-                    </p>
-                  </div>
-                  <div className="rounded-full bg-cream-100 px-3 py-1 text-xs font-medium text-slate-600">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                    {isPreparing ? 'Setting up' : isRecording ? 'Recording' : isBusy ? 'Processing' : 'Camera'}
+                  </p>
+                  <div className="rounded-lg bg-cream-200 px-3 py-1 text-xs font-medium text-slate-600">
                     Max {formatTime(maxSeconds)}
                   </div>
                 </div>
@@ -332,101 +331,43 @@ export default function FreePage() {
               </div>
             </div>
 
-            <div className="space-y-6">
-              <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Session Status</p>
-                <div className="mt-4 rounded-[28px] bg-[linear-gradient(135deg,rgba(15,23,42,0.04),rgba(25,52,95,0.08),rgba(244,201,120,0.18))] p-4">
-                  <div className="flex items-start justify-between gap-4">
+            <div className="space-y-4">
+              {/* Controls card */}
+              <div className="rounded-2xl border border-cream-300 bg-cream-50 p-5 shadow-sm">
+                <div className="rounded-xl bg-[linear-gradient(140deg,#fffdf7_0%,#f8f2e2_55%,#eef4ff_100%)] p-4">
+                  <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-lg font-semibold text-slate-900">{statusHeadline}</p>
-                      <p className="mt-1 max-w-sm text-sm leading-6 text-slate-600">{statusCopy}</p>
+                      <p className="font-semibold text-slate-900">{statusHeadline}</p>
+                      <p className="mt-1 text-sm leading-5 text-slate-500">{statusCopy}</p>
                     </div>
-                    <div className="rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-slate-700 shadow-sm">
-                      {completionPercent}% of max time
-                    </div>
+                    <span className="shrink-0 rounded-md bg-white/80 px-2.5 py-1 font-mono text-xs font-medium text-slate-600">
+                      {formatTime(recordSeconds)}
+                    </span>
                   </div>
-                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/70">
+                  <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-cream-300/60">
                     <div
-                      className="h-full rounded-full bg-[linear-gradient(90deg,#19345f_0%,#355c9b_55%,#f4c978_100%)] transition-all duration-300"
+                      className="h-full rounded-full bg-navy-500 transition-all duration-300"
                       style={{ width: `${completionPercent}%` }}
                     />
                   </div>
                 </div>
 
-                <div className="mt-4 space-y-4">
-                  <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
-                    <span className="text-sm font-medium text-slate-700">Time elapsed</span>
-                    <span className="font-mono text-sm text-slate-900">
-                      {formatTime(recordSeconds)} / {formatTime(maxSeconds)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
-                    <span className="text-sm font-medium text-slate-700">Chunk uploads</span>
-                    <div className="flex items-center gap-2">
-                      {chunkUploads.length === 0 && (
-                        <span className="text-xs text-slate-400">No completed chunks yet</span>
-                      )}
-                      {chunkUploads.map((chunk) => (
-                        <span
-                          key={chunk.chunkIndex}
-                          title={`Chunk ${chunk.chunkIndex + 1}: ${chunk.status}`}
-                          className={`h-3 w-3 rounded-full ${
-                            chunk.status === 'uploaded'
-                              ? 'bg-emerald-500'
-                              : chunk.status === 'failed'
-                              ? 'bg-rose-500'
-                              : 'bg-amber-400'
-                          }`}
-                        />
-                      ))}
-                      {isRecording && <span className="h-3 w-3 animate-pulse rounded-full bg-navy-500" />}
-                    </div>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Completed</p>
-                      <p className="mt-2 text-2xl font-semibold text-slate-900">{uploadedChunkCount}</p>
-                      <p className="text-xs text-slate-500">of {totalChunkCount} expected chunks</p>
-                    </div>
-                    <div className="rounded-2xl bg-amber-50 px-4 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-amber-600">In flight</p>
-                      <p className="mt-2 text-2xl font-semibold text-slate-900">{uploadingChunkCount}</p>
-                      <p className="text-xs text-slate-500">upload requests running</p>
-                    </div>
-                    <div className="rounded-2xl bg-rose-50 px-4 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-rose-600">Needs attention</p>
-                      <p className="mt-2 text-2xl font-semibold text-slate-900">{failedChunkCount}</p>
-                      <p className="text-xs text-slate-500">chunk uploads failed</p>
-                    </div>
-                  </div>
-                </div>
-
                 {errorMessage && (
-                  <div className="mt-4 rounded-[24px] border border-rose-200 bg-[linear-gradient(135deg,rgba(255,241,242,0.95),rgba(255,247,237,0.92))] px-4 py-4">
+                  <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
                     <p className="text-sm font-semibold text-rose-700">Recording needs a retry</p>
-                    <p className="mt-2 text-sm leading-6 text-rose-700">{errorMessage}</p>
-                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-rose-500">
-                      Quick fix: let the mic capture for a second before stopping, then try again.
-                    </p>
+                    <p className="mt-1 text-sm leading-5 text-rose-600">{errorMessage}</p>
                   </div>
                 )}
 
-                {transcriptPreview && (
-                  <div className="mt-4 rounded-2xl border border-cream-200 bg-cream-50 px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Transcript Preview</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{transcriptPreview}</p>
-                  </div>
-                )}
-
-                <div className="mt-6 flex flex-wrap gap-3">
+                <div className="mt-4 flex flex-wrap gap-2">
                   {isRecording && (
                     <button
                       type="button"
                       onClick={() => void stopRecording()}
-                      className="inline-flex items-center gap-2 rounded-full bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-rose-600"
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-600"
                     >
-                      <Square size={16} />
-                      Stop recording
+                      <Square size={15} />
+                      Stop
                     </button>
                   )}
 
@@ -434,10 +375,10 @@ export default function FreePage() {
                     <button
                       type="button"
                       onClick={() => void restartRecording()}
-                      className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                      className="inline-flex items-center gap-2 rounded-lg border border-cream-300 bg-cream-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-300"
                     >
-                      <RotateCcw size={16} />
-                      Restart take
+                      <RotateCcw size={15} />
+                      Restart
                     </button>
                   )}
 
@@ -446,36 +387,22 @@ export default function FreePage() {
                       type="button"
                       disabled={isPreparing}
                       onClick={() => {
-                        if (isPreparing) {
-                          return;
-                        }
-                        if (status === 'error') {
-                          void retryRecording();
-                          return;
-                        }
+                        if (isPreparing) return;
+                        if (status === 'error') { void retryRecording(); return; }
                         void beginRecording();
                       }}
-                      className={`inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-colors ${
+                      className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
                         isPreparing
                           ? 'cursor-not-allowed bg-cream-200 text-slate-400'
                           : 'bg-navy-500 text-white hover:bg-navy-600'
                       }`}
                     >
                       {isPreparing ? (
-                        <>
-                          <Loader2 size={16} className="animate-spin" />
-                          Setting up…
-                        </>
+                        <><Loader2 size={15} className="animate-spin" />Setting up</>
                       ) : status === 'error' ? (
-                        <>
-                          <Mic size={16} />
-                          Try again
-                        </>
+                        <><Mic size={15} />Try again</>
                       ) : (
-                        <>
-                          <Mic size={16} />
-                          Start recording
-                        </>
+                        <><Mic size={15} />Start recording</>
                       )}
                     </button>
                   )}
@@ -484,45 +411,103 @@ export default function FreePage() {
                     <button
                       type="button"
                       onClick={resetAll}
-                      className="inline-flex items-center gap-2 rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
+                      className="inline-flex items-center gap-2 rounded-lg border border-cream-300 bg-cream-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-300"
                     >
-                      <RotateCcw size={16} />
+                      <RotateCcw size={15} />
                       Start over
                     </button>
                   )}
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-[linear-gradient(135deg,#fff8eb_0%,#fef6dc_50%,#fffdf6_100%)] p-6 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Processing Flow</p>
-                <div className="mt-5 space-y-3">
-                  {[
-                    { label: 'Capture chunks', active: captureStepActive },
-                    { label: 'Transcribe audio', active: transcribeStepActive },
-                    { label: 'Run scorecard', active: scorecardStepActive },
-                    { label: 'Return results', active: resultsStepActive },
-                  ].map((step, index) => (
-                    <div key={step.label} className="flex items-center gap-3">
-                      <div
-                        className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${
-                          step.active ? 'bg-navy-500 text-white' : 'bg-white text-slate-400'
-                        }`}
-                      >
-                        {index + 1}
-                      </div>
-                      <div className="flex-1 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate-600">
-                        {step.label}
-                      </div>
+              {/* Chunk uploads + pipeline card */}
+              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-[linear-gradient(140deg,#fffdf7_0%,#f8f2e2_55%,#eef4ff_100%)] shadow-sm">
+                {/* Chunk uploads section */}
+                <div className="p-5">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Chunk uploads</p>
+
+                  {/* Dot track */}
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {chunkUploads.length === 0 ? (
+                      <span className="text-xs text-slate-400">Chunks will appear as they upload.</span>
+                    ) : (
+                      chunkUploads.map((chunk) => (
+                        <span
+                          key={chunk.chunkIndex}
+                          title={`Chunk ${chunk.chunkIndex + 1}: ${chunk.status}`}
+                          className={`h-3 w-3 rounded-full transition-colors ${
+                            chunk.status === 'uploaded'
+                              ? 'bg-emerald-500'
+                              : chunk.status === 'failed'
+                              ? 'bg-rose-500'
+                              : 'animate-pulse bg-navy-200'
+                          }`}
+                        />
+                      ))
+                    )}
+                    {isRecording && (
+                      <span className="h-3 w-3 animate-pulse rounded-full bg-navy-300" title="Next chunk" />
+                    )}
+                  </div>
+
+                  {/* Stats row */}
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <div className="rounded-lg bg-white/70 px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Done</p>
+                      <p className="mt-1 text-xl font-semibold text-slate-900">{uploadedChunkCount}</p>
+                      <p className="text-[10px] text-slate-400">of {totalChunkCount}</p>
                     </div>
-                  ))}
+                    <div className="rounded-lg bg-navy-100/60 px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-navy-600">Uploading</p>
+                      <p className="mt-1 text-xl font-semibold text-slate-900">{uploadingChunkCount}</p>
+                      <p className="text-[10px] text-slate-400">in flight</p>
+                    </div>
+                    <div className="rounded-lg bg-rose-100/70 px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-rose-500">Failed</p>
+                      <p className="mt-1 text-xl font-semibold text-slate-900">{failedChunkCount}</p>
+                      <p className="text-[10px] text-slate-400">chunks</p>
+                    </div>
+                  </div>
+
+                  {transcriptPreview && (
+                    <div className="mt-4 rounded-lg border border-cream-300 bg-white/60 px-3 py-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Transcript preview</p>
+                      <p className="mt-1.5 text-sm leading-5 text-slate-600">{transcriptPreview}</p>
+                    </div>
+                  )}
                 </div>
 
-                {isBusy && (
-                  <div className="mt-5 inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
-                    <Loader2 size={16} className="animate-spin text-navy-500" />
-                    {processingStage || 'Working through the session analysis'}
+                {/* Pipeline section */}
+                <div className="border-t border-cream-300/60 px-5 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Pipeline</p>
+                  <div className="mt-3 space-y-2.5">
+                    {[
+                      { label: 'Capture chunks', active: captureStepActive },
+                      { label: 'Transcribe audio', active: transcribeStepActive },
+                      { label: 'Run scorecard', active: scorecardStepActive },
+                      { label: 'Return results', active: resultsStepActive },
+                    ].map((step, index) => (
+                      <div key={step.label} className="flex items-center gap-3">
+                        <div
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${
+                            step.active ? 'bg-navy-500 text-white' : 'bg-white/60 text-slate-400'
+                          }`}
+                        >
+                          {index + 1}
+                        </div>
+                        <p className={`text-sm ${step.active ? 'font-medium text-slate-800' : 'text-slate-400'}`}>
+                          {step.label}
+                        </p>
+                        {step.active && isBusy && index === [captureStepActive, transcribeStepActive, scorecardStepActive, resultsStepActive].lastIndexOf(true) && (
+                          <Loader2 size={13} className="ml-auto animate-spin text-navy-500" />
+                        )}
+                      </div>
+                    ))}
                   </div>
-                )}
+                  {isBusy && processingStage && (
+                    <p className="mt-3 text-xs text-slate-500">{processingStage}</p>
+                  )}
+                </div>
               </div>
             </div>
           </motion.div>
@@ -534,59 +519,38 @@ export default function FreePage() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
-            className="space-y-6"
+            className="space-y-8"
           >
-            <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-              {/* Left column: Video */}
-              <div className="overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-sm">
-                <div className="border-b border-cream-200 px-6 py-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Recorded Session</p>
-                  <h2 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-                    Final analysis
-                  </h2>
-                </div>
-                <div className="p-6">
-                  {recordedVideoUrl ? (
-                    <video
-                      src={recordedVideoUrl}
-                      controls
-                      playsInline
-                      className="aspect-video w-full rounded-[24px] bg-slate-950 object-cover"
-                    />
-                  ) : (
-                    <div className="flex aspect-video items-center justify-center rounded-[24px] bg-cream-50 text-sm text-slate-400">
-                      Recording preview unavailable
-                    </div>
-                  )}
-                </div>
+            {/* Results header */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-navy-500">Free Speaking</p>
+                <h2 className="mt-1 font-serif text-3xl font-semibold text-slate-900">Final analysis</h2>
               </div>
-
-              {/* Right column: Transcript audit + action buttons */}
-              <div className="flex flex-col gap-6">
-                <WordAudit
-                  transcriptWords={transcriptWords}
-                  fillerWordsFound={fillerWordsFound}
-                />
-
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={resetAll}
-                    className="inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
-                  >
-                    <RotateCcw size={16} />
-                    Record Again
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => router.push('/home')}
-                    className="rounded-full bg-cream-100 px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-200"
-                  >
-                    Back to Home
-                  </button>
-                </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="inline-flex items-center gap-2 rounded-lg bg-navy-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-600"
+                >
+                  <RotateCcw size={15} />
+                  Record again
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push('/home')}
+                  className="rounded-lg border border-cream-300 bg-cream-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-cream-300"
+                >
+                  Home
+                </button>
               </div>
             </div>
+
+            {/* Word audit */}
+            <WordAudit
+              transcriptWords={transcriptWords}
+              fillerWordsFound={fillerWordsFound}
+            />
 
             <PhaseCScorecard scorecard={scorecard} writtenSummary={writtenSummary} />
 
@@ -594,6 +558,55 @@ export default function FreePage() {
               patterns={patternsData}
               wordCorrelations={wordCorrelations}
             />
+
+            {/* Video replay — collapsible */}
+            {recordedVideoUrl && (
+              <VideoReplay src={recordedVideoUrl} />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function VideoReplay({ src }: { src: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-2xl border border-cream-300 bg-cream-50 shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-5 py-4 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Video size={15} className="text-navy-500" />
+          <span className="text-sm font-semibold text-slate-700">Session replay</span>
+        </div>
+        <ChevronDown
+          size={16}
+          className={`text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="video"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 pb-5">
+              <video
+                src={src}
+                controls
+                playsInline
+                className="aspect-video w-full rounded-xl bg-slate-950 object-cover"
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

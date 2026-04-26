@@ -23,7 +23,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           <div className="w-12 h-12 mx-auto rounded-2xl bg-navy-500/10 text-navy-500 flex items-center justify-center text-sm font-semibold mb-4">
             AI
           </div>
-          <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900 mb-2">
+          <h1 className="font-serif text-2xl font-semibold text-slate-900 mb-2">
             Loading your practice space
           </h1>
           <p className="text-slate-500">

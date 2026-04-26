@@ -1,13 +1,13 @@
 'use client';
 
 import { startTransition, useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Mic, RefreshCw, Square, Volume2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -18,6 +18,7 @@ import {
   type DisplayMetric,
   type PhaseADerivedMetrics,
   type SessionSetup,
+  type SessionSummary,
   usePhaseASession,
 } from '@/hooks/usePhaseASession';
 import { Switch } from '@/components/ui/switch';
@@ -268,179 +269,108 @@ export default function SprintPage() {
 
   if (status === 'setup') {
     return (
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-8">
-          <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+      <div className="mx-auto max-w-2xl py-8">
+        {/* Page header */}
+        <div className="mb-12 text-center">
+          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-navy-500">
             Emotion Sprint
+          </p>
+          <h1 className="font-serif text-[3rem] font-semibold leading-[1.1] text-slate-900 sm:text-[3.5rem]">
+            Choose your intent.
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Pick one emotion, respond to a short prompt, and get feedback on how well you expressed it.
+          <p className="mx-auto mt-5 max-w-md text-base leading-relaxed text-slate-500">
+            Pick one. We'll generate a 2-sentence scenario. You have 20 seconds to deliver it in that tone.
           </p>
         </div>
 
-        <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
-          <h2 className="mb-4 text-lg font-bold text-slate-900">Choose an emotion to practice</h2>
-          <div className="mb-8 flex flex-wrap gap-3">
-            {emotionOptions.map((emotion) => (
+        {/* Emotion grid */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {emotionOptions.map((emotion) => {
+            const isSelected = setup.targetEmotion === emotion;
+            const displayName = emotion.replace(' (Neutral)', '');
+            return (
               <button
                 key={emotion}
                 onClick={() => setSetup((current) => ({ ...current, targetEmotion: emotion }))}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                  setup.targetEmotion === emotion
-                    ? 'bg-navy-500 text-white shadow-md'
-                    : 'bg-cream-200 text-slate-600 hover:bg-cream-300'
+                className={`relative rounded-xl px-4 py-5 text-left transition-all duration-150 ${
+                  isSelected
+                    ? 'bg-navy-500 text-white shadow-lg'
+                    : 'bg-cream-200 text-slate-700 hover:bg-cream-300 hover:shadow-sm'
                 }`}
               >
-                {emotion}
+                {isSelected && (
+                  <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-white/20">
+                    <svg width="8" height="6" viewBox="0 0 8 6" fill="none">
+                      <path d="M1 3l2 2 4-4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                )}
+                <span className={`block text-sm font-semibold leading-tight ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                  {displayName}
+                </span>
               </button>
-            ))}
-          </div>
+            );
+          })}
+        </div>
 
-          <button
-            onClick={handleStart}
-            disabled={!setup.targetEmotion}
-            className="rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-          >
-            Generate prompt →
-          </button>
+        {/* CTA area */}
+        <div className="mt-10">
+          <AnimatePresence mode="wait">
+            {setup.targetEmotion ? (
+              <motion.div
+                key="selected"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 6 }}
+                transition={{ duration: 0.22, ease: [0.25, 1, 0.5, 1] }}
+              >
+                <div className="mb-6 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-cream-300" />
+                  <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                    Practicing
+                  </p>
+                  <div className="h-px flex-1 bg-cream-300" />
+                </div>
+                <p className="mb-6 text-center font-serif text-2xl font-semibold text-slate-900">
+                  {setup.targetEmotion.replace(' (Neutral)', '')}
+                </p>
+                <button
+                  onClick={handleStart}
+                  className="w-full rounded-xl bg-navy-500 py-4 text-sm font-semibold text-white shadow-md transition-all hover:bg-navy-600 active:scale-[0.99]"
+                >
+                  Generate prompt →
+                </button>
+              </motion.div>
+            ) : (
+              <motion.p
+                key="hint"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="text-center text-sm text-slate-400"
+              >
+                Select an emotion above to continue.
+              </motion.p>
+            )}
+          </AnimatePresence>
 
-          {shownError && <p className="mt-4 text-sm text-red-600">{shownError}</p>}
+          {shownError && (
+            <p className="mt-4 text-sm text-red-600">{shownError}</p>
+          )}
         </div>
       </div>
     );
   }
 
-  if (status === 'summary') {
-    const fillerEntries = Object.entries(summary?.filler_words ?? {});
-    const matchScoreData = (summary?.match_scores ?? []).map((score, index) => ({
-      round: `R${index + 1}`,
-      score: Math.round(score * 100),
-      fill: '#153e75',
-    }));
-    const fillerChartData = fillerEntries
-      .map(([word, count]) => ({
-        word,
-        count: Number(count),
-      }))
-      .sort((left, right) => right.count - left.count);
-
-    return (
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div>
-          <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-            Session Summary
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Review your critiques, emotion-match trend, and filler-word totals.
-          </p>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">
-              Critiques
-            </h2>
-            <div className="space-y-4">
-              {(summary?.critiques ?? []).map((item, index) => (
-                <div key={`${item}-${index}`} className="rounded-2xl bg-cream-100 p-4">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                    Round {index + 1}
-                  </p>
-                  <MarkdownCritique content={item} />
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">
-              Match Score Trend
-            </h2>
-            <div className="h-52 rounded-2xl bg-cream-100 p-4">
-              {matchScoreData.length ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={matchScoreData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
-                    <CartesianGrid vertical={false} stroke="#eadcc2" />
-                    <XAxis dataKey="round" tick={{ fill: '#64748b', fontSize: 12 }} tickLine={false} axisLine={false} />
-                    <YAxis
-                      domain={[0, 100]}
-                      tick={{ fill: '#64748b', fontSize: 12 }}
-                      tickLine={false}
-                      axisLine={false}
-                      width={40}
-                    />
-                    <Tooltip
-                      cursor={{ fill: 'rgba(21, 62, 117, 0.08)' }}
-                      formatter={(value) => [`${value}%`, 'Match score']}
-                    />
-                    <Bar dataKey="score" radius={[12, 12, 0, 0]}>
-                      {matchScoreData.map((entry) => (
-                        <Cell key={entry.round} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                  No rounds recorded yet.
-                </div>
-              )}
-            </div>
-
-            <h2 className="mb-4 mt-6 text-sm font-semibold uppercase tracking-widest text-navy-500">
-              Filler Words
-            </h2>
-            <div className="rounded-2xl bg-cream-100 p-4">
-              {fillerChartData.length ? (
-                <div className="h-44">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={fillerChartData}
-                      layout="vertical"
-                      margin={{ top: 0, right: 8, bottom: 0, left: 8 }}
-                    >
-                      <CartesianGrid horizontal={false} stroke="#eadcc2" />
-                      <XAxis
-                        type="number"
-                        tick={{ fill: '#64748b', fontSize: 12 }}
-                        tickLine={false}
-                        axisLine={false}
-                        allowDecimals={false}
-                      />
-                      <YAxis
-                        type="category"
-                        dataKey="word"
-                        tick={{ fill: '#64748b', fontSize: 12 }}
-                        tickLine={false}
-                        axisLine={false}
-                        width={72}
-                      />
-                      <Tooltip formatter={(value) => [value, 'Count']} cursor={{ fill: 'rgba(21, 62, 117, 0.08)' }} />
-                      <Bar dataKey="count" radius={[0, 12, 12, 0]} fill="#4f46e5" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <span className="text-sm text-slate-500">No filler words detected.</span>
-              )}
-            </div>
-          </section>
-        </div>
-
-        <button
-          onClick={handleResetAll}
-          className="rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
-        >
-          Start new session
-        </button>
-      </div>
-    );
+  if (status === 'summary' && summary) {
+    return <SummaryView summary={summary} onReset={handleResetAll} />;
   }
 
   if (status === 'error') {
     return (
       <div className="mx-auto max-w-2xl rounded-2xl border border-red-200 bg-white p-8 text-center shadow-sm">
-        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+        <h1 className="font-serif text-2xl font-semibold text-slate-900">
           Something went wrong
         </h1>
         <p className="mt-3 text-sm text-slate-600">{shownError || 'Try starting the drill again.'}</p>
@@ -455,61 +385,55 @@ export default function SprintPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
-        <div className="flex min-h-[140px] flex-col justify-between gap-2">
-          <div>
-            <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-navy-500">Emotion Prompt</p>
-            <p className="min-h-20 text-2xl font-semibold leading-relaxed text-slate-900">
-              {scenarioPrompt || 'Generating your 2-sentence prompt...'}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void toggleScenarioTextToSpeech();
-              }}
-              disabled={!scenarioPrompt}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                isScenarioAudioPlaying
-                  ? 'bg-navy-500 text-white hover:bg-navy-600'
-                  : 'text-slate-500 hover:bg-cream-100 hover:text-slate-700'
-              }`}
-            >
-              {isScenarioAudioPlaying ? <Square size={14} /> : <Volume2 size={14} />}
-              {isScenarioAudioPlaying ? 'Stop audio' : 'Listen'}
-            </button>
-            <button
-              onClick={handleRegenerate}
-              disabled={status === 'processing'}
-              className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm text-slate-500 transition-colors hover:bg-cream-100 hover:text-slate-700"
-            >
-              <RefreshCw size={14} /> Regenerate
-            </button>
-          </div>
+    <div className="space-y-4">
+      {/* Emotion Prompt */}
+      <section className="rounded-2xl border border-cream-300 bg-cream-100 px-6 py-5">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-navy-500">Emotion Prompt</p>
+        <p className="min-h-[3.5rem] text-[1.375rem] font-semibold leading-snug text-slate-900">
+          {scenarioPrompt || 'Generating your scenario…'}
+        </p>
+        <div className="mt-4 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => { void toggleScenarioTextToSpeech(); }}
+            disabled={!scenarioPrompt}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              isScenarioAudioPlaying
+                ? 'bg-navy-500 text-white'
+                : 'text-slate-500 hover:bg-cream-200 hover:text-slate-800'
+            }`}
+          >
+            {isScenarioAudioPlaying ? <Square size={13} /> : <Volume2 size={13} />}
+            {isScenarioAudioPlaying ? 'Stop' : 'Listen'}
+          </button>
+          <button
+            onClick={handleRegenerate}
+            disabled={status === 'processing'}
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-slate-500 transition-colors hover:bg-cream-200 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <RefreshCw size={13} /> Regenerate
+          </button>
         </div>
       </section>
 
+      {/* Critique view */}
       {(status === 'critique' || roundResult) && (
-        <section className="grid gap-6 lg:grid-cols-[1fr_280px]">
-          <div className="rounded-3xl border border-cream-200 bg-white p-6">
+        <section className="grid gap-4 lg:grid-cols-[1fr_280px]">
+          <div className="rounded-2xl border border-cream-200 bg-white p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm font-semibold uppercase tracking-widest text-navy-500">Coach Critique</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-navy-500">Coach Critique</p>
               <button
                 type="button"
-                onClick={() => {
-                  void toggleCritiqueTextToSpeech();
-                }}
+                onClick={() => { void toggleCritiqueTextToSpeech(); }}
                 disabled={!critique}
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                   isCritiqueAudioPlaying
-                    ? 'bg-navy-500 text-white hover:bg-navy-600'
-                    : 'text-slate-500 hover:bg-cream-100 hover:text-slate-700'
+                    ? 'bg-navy-500 text-white'
+                    : 'text-slate-500 hover:bg-cream-100 hover:text-slate-800'
                 }`}
               >
-                {isCritiqueAudioPlaying ? <Square size={14} /> : <Volume2 size={14} />}
-                {isCritiqueAudioPlaying ? 'Stop audio' : 'Listen'}
+                {isCritiqueAudioPlaying ? <Square size={13} /> : <Volume2 size={13} />}
+                {isCritiqueAudioPlaying ? 'Stop' : 'Listen'}
               </button>
             </div>
             <MarkdownCritique content={critique} />
@@ -521,9 +445,9 @@ export default function SprintPage() {
                   });
                 }}
                 disabled={isEnding}
-                className="rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
+                className="rounded-xl bg-navy-500 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
               >
-                {isEnding ? 'Finishing...' : 'Next Exercise'}
+                {isEnding ? 'Finishing…' : 'Next exercise'}
               </button>
               <button
                 onClick={() => {
@@ -532,9 +456,9 @@ export default function SprintPage() {
                   });
                 }}
                 disabled={isEnding}
-                className="rounded-full border border-cream-300 px-5 py-3 text-sm font-medium text-slate-700 transition-all hover:bg-cream-100"
+                className="rounded-xl border border-cream-300 px-5 py-3 text-sm font-medium text-slate-700 transition-all hover:bg-cream-100"
               >
-                {isEnding ? 'Finishing...' : 'End Session'}
+                {isEnding ? 'Finishing…' : 'End session'}
               </button>
             </div>
           </div>
@@ -549,76 +473,81 @@ export default function SprintPage() {
         </section>
       )}
 
+      {/* Recording view */}
       {!(status === 'critique' || roundResult) && (
-        <section className={`grid gap-6 ${status === 'processing' ? 'lg:grid-cols-1' : 'lg:grid-cols-[1fr_260px]'}`}>
-          <div className="flex min-h-[340px] flex-col items-center justify-center rounded-3xl border border-cream-200 bg-white p-8">
+        <section className={`grid gap-4 ${status === 'processing' ? '' : 'lg:grid-cols-[1fr_280px]'}`}>
+          {/* Recording controls */}
+          <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-cream-200 bg-white p-8">
             {status === 'processing' ? (
               <ProcessingStages activeStage={processingStage} />
             ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={!canRecord}
-                  onClick={toggleRecording}
-                  className={`flex h-36 w-36 items-center justify-center rounded-full transition ${
-                    isRecording
-                      ? 'animate-pulse bg-red-500 text-white'
-                      : 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300'
-                  }`}
-                >
-                  {isRecording ? <Square className="h-10 w-10" /> : <Mic className="h-12 w-12" />}
-                </button>
-                <p className="mt-5 text-sm font-semibold text-slate-900">
-                  {isRecording ? 'Recording...' : isPreparingPreview ? 'Preparing camera...' : 'Click to start recording'}
-                </p>
-                <p className={`mt-2 text-sm ${secondsRemaining <= 5 ? 'text-red-500' : 'text-slate-500'}`}>
-                  {isRecording
-                    ? `${secondsRemaining}s remaining`
-                    : isPreparingPreview
-                      ? 'Loading the selected camera mode.'
-                      : 'You will have 20 seconds to answer.'}
-                </p>
-              </>
-            )}
+              <div className="flex flex-col items-center gap-5">
+                {/* Mic button */}
+                <div className="relative">
+                  {isRecording && (
+                    <span className="absolute inset-0 animate-ping rounded-full bg-red-400/25" />
+                  )}
+                  <button
+                    type="button"
+                    disabled={!canRecord}
+                    onClick={toggleRecording}
+                    className={`relative flex h-28 w-28 items-center justify-center rounded-full shadow-md transition-all duration-200 active:scale-95 ${
+                      isRecording
+                        ? 'bg-red-500 text-white shadow-red-200'
+                        : 'bg-navy-500 text-white hover:bg-navy-600 shadow-navy-200/60 disabled:bg-slate-200 disabled:shadow-none disabled:text-slate-400'
+                    }`}
+                  >
+                    {isRecording ? <Square className="h-9 w-9" /> : <Mic className="h-10 w-10" />}
+                  </button>
+                </div>
 
-            {shownError && (
-              <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{shownError}</p>
+                {/* State label + timer */}
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {isRecording ? 'Recording' : isPreparingPreview ? 'Preparing camera' : 'Click to record'}
+                  </p>
+                  <p className={`mt-1 text-sm tabular-nums ${isRecording && secondsRemaining <= 5 ? 'font-semibold text-red-500' : 'text-slate-400'}`}>
+                    {isRecording
+                      ? `${secondsRemaining}s remaining`
+                      : isPreparingPreview
+                        ? 'Loading camera…'
+                        : '20 second limit'}
+                  </p>
+                </div>
+
+                {shownError && (
+                  <p className="rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-600">{shownError}</p>
+                )}
+              </div>
             )}
           </div>
 
+          {/* Webcam panel */}
           {status !== 'processing' && (
-            <div className="rounded-3xl border border-cream-200 bg-white p-4">
-              <div className="mb-4 flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-3 rounded-2xl border border-cream-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">Webcam preview</p>
-                  <p className="mt-1 text-xs text-slate-500">{captureModeDescription}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Analysis mode</p>
+                  <p className="mt-0.5 text-sm font-semibold text-slate-900">{isPowerfulMode ? 'Powerful' : 'Fast'}</p>
                 </div>
-                <div className="flex items-center gap-3 rounded-2xl bg-cream-100 px-3 py-2">
-                  <div className="text-right">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Analysis mode</p>
-                    <p className="text-sm font-semibold text-slate-900">{isPowerfulMode ? 'Powerful' : 'Fast'}</p>
-                  </div>
-                  <Switch
-                    checked={isPowerfulMode}
-                    onCheckedChange={(checked) => setCaptureMode(checked ? POWERFUL_CAPTURE_MODE : FAST_CAPTURE_MODE)}
-                    disabled={isRecording || isPreparingPreview}
-                    aria-label={`Analysis mode: ${isPowerfulMode ? 'Powerful' : 'Fast'}`}
-                  />
-                </div>
+                <Switch
+                  checked={isPowerfulMode}
+                  onCheckedChange={(checked) => setCaptureMode(checked ? POWERFUL_CAPTURE_MODE : FAST_CAPTURE_MODE)}
+                  disabled={isRecording || isPreparingPreview}
+                  aria-label={`Analysis mode: ${isPowerfulMode ? 'Powerful' : 'Fast'}`}
+                />
               </div>
               <video
                 ref={previewRef}
                 autoPlay
                 muted
                 playsInline
-                className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
+                className="aspect-[4/3] w-full rounded-xl bg-cream-200 object-cover"
               />
               {!hasPreviewStream && (
-                <div className="mt-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm text-slate-500">
-                  {isPreparingPreview
-                    ? 'Preparing the selected camera mode...'
-                    : 'Camera preview appears here when the selected mode is ready.'}
-                </div>
+                <p className="text-center text-xs text-slate-400">
+                  {isPreparingPreview ? 'Preparing camera…' : 'Camera preview appears here.'}
+                </p>
               )}
             </div>
           )}
@@ -628,21 +557,221 @@ export default function SprintPage() {
   );
 }
 
-function MarkdownCritique({ content }: { content: string }) {
+function SummaryView({ summary, onReset }: { summary: SessionSummary; onReset: () => void }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const critiques = summary.critiques ?? [];
+  const matchScores = summary.match_scores ?? [];
+  const fillerEntries = Object.entries(summary.filler_words ?? {}).sort((a, b) => b[1] - a[1]);
+  const matchScoreData = matchScores.map((score, i) => ({
+    round: `R${i + 1}`,
+    score: Math.round(score * 100),
+  }));
+  const roundCount = critiques.length;
+  const activePct = Math.round((matchScores[activeIndex] ?? 0) * 100);
+
+  function scorePillClass(pct: number) {
+    return pct >= 70
+      ? 'bg-emerald-50 text-emerald-700'
+      : pct >= 40
+        ? 'bg-amber-50 text-amber-700'
+        : 'bg-rose-50 text-rose-700';
+  }
+
+  function scoreTextClass(pct: number) {
+    return pct >= 70 ? 'text-emerald-600' : pct >= 40 ? 'text-amber-600' : 'text-rose-500';
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-10">
+      {/* Header */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest text-navy-500">Emotion Sprint</p>
+        <h1 className="mt-2 font-serif text-3xl font-semibold leading-tight text-slate-900">
+          Session Summary
+        </h1>
+        <p className="mt-1.5 text-sm text-slate-500">
+          {roundCount} round{roundCount !== 1 ? 's' : ''} completed
+        </p>
+      </div>
+
+      {/* Critique carousel */}
+      <section className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Round Critiques</p>
+
+        {/* Tab strip — spans full width, equal columns */}
+        {roundCount > 0 && (
+          <div
+            className="grid overflow-hidden rounded-xl border border-cream-300 bg-cream-300"
+            style={{ gridTemplateColumns: `repeat(${roundCount}, 1fr)`, gap: '1px' }}
+          >
+            {critiques.map((_, i) => {
+              const pct = Math.round((matchScores[i] ?? 0) * 100);
+              const isActive = i === activeIndex;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setActiveIndex(i)}
+                  className={`flex flex-col items-center gap-0.5 py-3.5 px-3 text-center transition-colors duration-150 ${
+                    isActive ? 'bg-navy-500' : 'bg-cream-50 hover:bg-cream-200'
+                  }`}
+                >
+                  <span
+                    className={`text-[10px] font-semibold uppercase tracking-widest ${
+                      isActive ? 'text-white/60' : 'text-slate-400'
+                    }`}
+                  >
+                    Round {i + 1}
+                  </span>
+                  <span
+                    className={`text-base font-bold tabular-nums ${
+                      isActive ? 'text-white' : scoreTextClass(pct)
+                    }`}
+                  >
+                    {pct}%
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Active critique panel */}
+        <div className="min-h-[180px] rounded-2xl border border-cream-300 bg-cream-50 p-6">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeIndex}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+            >
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  Round {activeIndex + 1}
+                </span>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${scorePillClass(activePct)}`}>
+                  {activePct}% match
+                </span>
+              </div>
+              <MarkdownCritique content={critiques[activeIndex] ?? ''} compact />
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        {/* Dot navigation */}
+        {roundCount > 1 && (
+          <div className="flex items-center justify-center gap-2 pt-1">
+            {critiques.map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setActiveIndex(i)}
+                aria-label={`Round ${i + 1}`}
+                className={`rounded-full transition-all duration-200 ${
+                  i === activeIndex
+                    ? 'h-2.5 w-2.5 bg-navy-500'
+                    : 'h-2 w-2 bg-cream-300 hover:bg-slate-300'
+                }`}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Data row — bottom */}
+      <div className="grid gap-6 md:grid-cols-2">
+        <section className="rounded-2xl border border-cream-300 bg-cream-50 p-6">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-400">Match Score Trend</p>
+          <p className="mb-5 font-serif text-xl font-semibold text-slate-900">Round by round</p>
+          <div className="h-48">
+            {matchScoreData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={matchScoreData} margin={{ top: 8, right: 4, bottom: 0, left: -12 }}>
+                  <CartesianGrid vertical={false} stroke="#EDE3CC" />
+                  <XAxis
+                    dataKey="round"
+                    tick={{ fill: '#94a3b8', fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fill: '#94a3b8', fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={32}
+                  />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(36, 55, 99, 0.06)' }}
+                    formatter={(value) => [`${value}%`, 'Match']}
+                  />
+                  <Bar dataKey="score" radius={[6, 6, 0, 0]} fill="#243763" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                No rounds recorded.
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-cream-300 bg-cream-50 p-6">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-400">Filler Words</p>
+          <p className="mb-5 font-serif text-xl font-semibold text-slate-900">Session totals</p>
+          {fillerEntries.length ? (
+            <div className="flex flex-wrap gap-2">
+              {fillerEntries.map(([word, count]) => (
+                <div key={word} className="flex items-center gap-2 rounded-xl bg-cream-200 px-3.5 py-2.5">
+                  <span className="text-sm font-semibold text-slate-700">{word}</span>
+                  <span className="rounded-full bg-cream-50 px-2 py-0.5 text-xs font-semibold text-slate-500">
+                    {count}×
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-emerald-50 px-4 py-4">
+              <p className="text-sm text-emerald-800">No filler words detected across all rounds.</p>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <button
+        onClick={onReset}
+        className="rounded-lg bg-navy-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-navy-600"
+      >
+        New session
+      </button>
+    </div>
+  );
+}
+
+function MarkdownCritique({ content, compact = false }: { content: string; compact?: boolean }) {
+  const prose = compact
+    ? 'mb-2 text-sm leading-6 text-slate-700 last:mb-0'
+    : 'mb-3 text-lg leading-relaxed text-slate-700 last:mb-0';
+  const list = compact
+    ? 'mb-2 list-disc space-y-1 pl-4 text-sm leading-6 text-slate-700'
+    : 'mb-3 list-disc space-y-2 pl-5 text-lg leading-relaxed text-slate-700';
+
   return (
     <ReactMarkdown
       components={{
-        h1: ({ children }) => <h1 className="mb-3 text-2xl font-semibold leading-snug text-slate-900">{children}</h1>,
-        h2: ({ children }) => <h2 className="mb-3 text-xl font-semibold leading-snug text-slate-900">{children}</h2>,
-        h3: ({ children }) => <h3 className="mb-3 text-lg font-semibold leading-snug text-slate-900">{children}</h3>,
-        p: ({ children }) => <p className="mb-3 text-lg leading-relaxed text-slate-700 last:mb-0">{children}</p>,
+        h1: ({ children }) => <h1 className={`mb-2 font-semibold leading-snug text-slate-900 ${compact ? 'text-base' : 'text-2xl'}`}>{children}</h1>,
+        h2: ({ children }) => <h2 className={`mb-2 font-semibold leading-snug text-slate-900 ${compact ? 'text-sm' : 'text-xl'}`}>{children}</h2>,
+        h3: ({ children }) => <h3 className={`mb-2 font-semibold leading-snug text-slate-900 ${compact ? 'text-sm' : 'text-lg'}`}>{children}</h3>,
+        p: ({ children }) => <p className={prose}>{children}</p>,
         strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
-        ul: ({ children }) => <ul className="mb-3 list-disc space-y-2 pl-5 text-lg leading-relaxed text-slate-700">{children}</ul>,
-        ol: ({ children }) => <ol className="mb-3 list-decimal space-y-2 pl-5 text-lg leading-relaxed text-slate-700">{children}</ol>,
+        ul: ({ children }) => <ul className={list}>{children}</ul>,
+        ol: ({ children }) => <ol className={`${list} list-decimal`}>{children}</ol>,
         li: ({ children }) => <li>{children}</li>,
         code: ({ children }) => (
-          <code className="rounded-md bg-cream-100 px-1.5 py-0.5 text-base text-slate-800">{children}</code>
+          <code className={`rounded bg-cream-200 px-1.5 py-0.5 text-slate-800 ${compact ? 'text-xs' : 'text-base'}`}>{children}</code>
         ),
       }}
     >

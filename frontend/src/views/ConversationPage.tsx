@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import {
   type ConversationTurn,
+  type FinalReport,
   type TurnAnalysis,
   usePhaseBConversation,
 } from '@/hooks/usePhaseBConversation';
@@ -85,6 +86,7 @@ export default function ConversationPage() {
     starterTopic,
     currentTurn,
     turns,
+    finalReport,
     processingStage,
     errorMessage,
     maxRecordingSeconds,
@@ -310,27 +312,15 @@ export default function ConversationPage() {
 
   if (status === 'setup') {
     return (
-      <div className="mx-auto max-w-6xl space-y-8">
-        <section className="mx-auto w-full max-w-4xl rounded-[32px] border border-cream-200 bg-white p-8 shadow-sm sm:p-10">
-          <div className="text-center">
-            <p className="text-sm font-semibold uppercase tracking-widest text-navy-500">Session Shape</p>
-            <h2 className="mt-4 font-['Playfair_Display'] text-4xl font-semibold leading-tight text-slate-900 sm:text-5xl">
-              Start with the conversation you want to emulate
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600">
-              Write a short brief about the real interaction you want to practice. We infer the other
-              person, their personality, the stakes, and the opening move from that brief so the session
-              feels grounded in something you actually care about.
-            </p>
-          </div>
-
-          <div className="mx-auto mt-10 max-w-3xl rounded-[32px] border border-navy-100 bg-[linear-gradient(140deg,#fffdf7_0%,#f8f2e2_55%,#eef4ff_100%)] p-6 shadow-sm sm:p-7">
-            <label
-              htmlFor="practice-prompt"
-              className="block text-center text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"
-            >
-              What conversation do you want to practice?
-            </label>
+      <div className="mx-auto w-full max-w-4xl pt-8">
+        <div className="mb-10 text-center">
+          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-navy-500">Conversation</p>
+          <h1 className="font-serif text-[3rem] font-semibold leading-[1.1] text-slate-900 sm:text-[3.5rem]">
+            Describe the scene.
+          </h1>
+        </div>
+        <section className="rounded-[32px] border border-cream-200 bg-white p-8 shadow-sm sm:p-10">
+          <div className="mx-auto max-w-3xl rounded-[32px] border border-navy-100 bg-[linear-gradient(140deg,#fffdf7_0%,#f8f2e2_55%,#eef4ff_100%)] p-6 shadow-sm sm:p-7">
             <Textarea
               id="practice-prompt"
               value={practicePromptInput}
@@ -339,24 +329,23 @@ export default function ConversationPage() {
                 setLocalError('');
               }}
               placeholder="I have a Roblox interview tomorrow. Make the interviewer sharp but encouraging, and focused on product thinking, collaboration, and how I handle ambiguity."
-              className="mt-5 min-h-[220px] rounded-[28px] border-0 bg-white/90 px-6 py-5 text-base leading-7 text-slate-700 shadow-sm ring-1 ring-cream-200 placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy-200"
+              className="min-h-[200px] rounded-[28px] border-0 bg-white/90 px-6 py-5 text-base leading-7 text-slate-700 shadow-sm ring-1 ring-cream-200 placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy-200"
             />
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-              <p>Be specific about the person, stakes, tone, and what kind of conversation this is.</p>
-              <p className={promptTooLong ? 'font-semibold text-red-600' : ''}>
-                {practicePromptWordCount}/{PRACTICE_PROMPT_WORD_LIMIT} words
+            <div className="mt-3 flex justify-end text-sm">
+              <p className={promptTooLong ? 'font-semibold text-red-600' : 'text-slate-400'}>
+                {practicePromptWordCount}/{PRACTICE_PROMPT_WORD_LIMIT}
               </p>
             </div>
           </div>
 
-          <Collapsible open={isExamplesOpen} onOpenChange={setIsExamplesOpen} className="mt-8">
+          <Collapsible open={isExamplesOpen} onOpenChange={setIsExamplesOpen} className="mt-6">
             <div className="flex flex-wrap items-center justify-center gap-3">
               <CollapsibleTrigger asChild>
                 <button
                   type="button"
                   className="inline-flex items-center gap-2 rounded-full border border-cream-300 bg-cream-50 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-navy-200 hover:bg-white"
                 >
-                  Try one
+                  Try an example
                   <ChevronDown
                     className={`h-4 w-4 transition-transform ${isExamplesOpen ? 'rotate-180' : ''}`}
                   />
@@ -366,9 +355,9 @@ export default function ConversationPage() {
                 type="button"
                 onClick={handleStart}
                 disabled={!normalizedPracticePrompt || promptTooLong}
-                className="rounded-full bg-navy-500 px-8 py-3.5 text-sm font-medium text-white shadow-md transition hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                className="rounded-full bg-navy-500 px-8 py-3.5 text-sm font-semibold text-white shadow-md transition hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
               >
-                Start Conversation
+                Start
               </button>
             </div>
             <CollapsibleContent className="data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down overflow-hidden">
@@ -401,23 +390,18 @@ export default function ConversationPage() {
   }
 
   return (
-    <div className="grid h-[calc(100vh-64px)] gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-      <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-cream-200 bg-white shadow-sm">
+    <div className="mx-auto grid w-full max-w-7xl h-[calc(100vh-48px)] gap-4 lg:grid-cols-[1.25fr_0.75fr]">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-cream-200 bg-cream-50 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-cream-200 px-5 py-4">
           <div>
-            <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-              {peerProfile ? `${peerProfile.name} is on the line` : 'Starting the conversation'}
+            <h1 className="font-serif text-2xl font-semibold text-slate-900">
+              {peerProfile ? peerProfile.name : 'Starting up'}
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-0.5 text-sm text-slate-500">
               {peerProfile
-                ? `${peerProfile.role} • ${scenario ?? peerProfile.scenario} • topic: ${starterTopic ?? 'loading'}`
-                : 'Generating a peer and opening topic.'}
+                ? `${peerProfile.role}${starterTopic ? ` · ${starterTopic}` : ''}`
+                : 'Generating peer and opening topic.'}
             </p>
-            {practicePrompt && (
-              <p className="mt-2 inline-flex max-w-3xl rounded-full bg-cream-50 px-3 py-1.5 text-xs text-slate-600">
-                Simulating: {practicePrompt}
-              </p>
-            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -511,16 +495,14 @@ export default function ConversationPage() {
               </button>
             )}
 
-            <p className="text-sm text-slate-500">
+            <p className="text-sm tabular-nums text-slate-400">
               {isRecording
-                ? `${secondsRemaining}s remaining`
-                : status === 'recording'
-                  ? `Keep it between ${MIN_RECORDING_SECONDS} and ${maxRecordingSeconds} seconds.`
-                  : isPeerSpeaking
-                    ? 'Wait for the peer audio to finish, or skip it and answer from the text bubble.'
-                    : !playPeerVoice
-                      ? 'Peer voice is off, so new turns will arrive as text only.'
-                      : 'The next recording window will open automatically.'}
+                ? `${secondsRemaining}s`
+                : isPeerSpeaking
+                  ? 'Peer speaking'
+                  : status === 'recording'
+                    ? `Up to ${maxRecordingSeconds}s`
+                    : ''}
             </p>
           </div>
 
@@ -531,10 +513,10 @@ export default function ConversationPage() {
       </section>
 
       <aside className="flex min-h-0 flex-col gap-4">
-        <section className="rounded-3xl border border-cream-200 bg-white p-4 shadow-sm">
+        <section className="rounded-3xl border border-cream-200 bg-cream-50 p-4 shadow-sm">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
             <Video className="h-4 w-4 text-navy-500" />
-            Camera Preview
+            Camera
           </div>
           <video
             ref={previewRef}
@@ -545,16 +527,22 @@ export default function ConversationPage() {
           />
         </section>
 
-        <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Latest Turn</h2>
-          {turns.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">
-              Once you complete a few turns, the local analysis will show up here.
-            </p>
-          ) : (
-            <TurnAnalysisCard turnAnalysis={turns[turns.length - 1].turn_analysis ?? null} />
-          )}
-        </section>
+        {status === 'complete' && finalReport ? (
+          <FinalReportCard finalReport={finalReport} onReset={resetAll} />
+        ) : (
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-cream-200 bg-cream-50 shadow-sm">
+            <div className="border-b border-cream-200 px-5 py-4">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-navy-500">Turn feedback</h2>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              {turns.length === 0 ? (
+                <p className="text-sm text-slate-400">Feedback appears after your first turn.</p>
+              ) : (
+                <TurnAnalysisCard turnAnalysis={turns[turns.length - 1].turn_analysis ?? null} />
+              )}
+            </div>
+          </section>
+        )}
 
         {status === 'error' && (
           <button
@@ -641,7 +629,7 @@ function TurnAnalysisCard({ turnAnalysis }: { turnAnalysis: TurnAnalysis | null 
   }
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-700">{turnAnalysis.summary}</p>
       <div className="grid grid-cols-2 gap-3">
         <ScoreTile label="Momentum" value={turnAnalysis.momentum_score} />
@@ -655,6 +643,55 @@ function TurnAnalysisCard({ turnAnalysis }: { turnAnalysis: TurnAnalysis | null 
   );
 }
 
+function FinalReportCard({
+  finalReport,
+  onReset,
+}: {
+  finalReport: FinalReport;
+  onReset: () => void;
+}) {
+  return (
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-cream-200 bg-cream-50 shadow-sm">
+      <div className="border-b border-cream-200 px-5 py-4">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-navy-500">Final Report</h2>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <p className="text-sm leading-6 text-slate-700">{finalReport.summary}</p>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <ScoreTile label="Momentum" value={finalReport.conversation_momentum_score} />
+        <ScoreTile label="Content" value={finalReport.content_quality_score} />
+        <ScoreTile label="Delivery" value={finalReport.emotional_delivery_score} />
+        <ScoreTile label="Energy" value={finalReport.energy_match_score} />
+        <ScoreTile label="Authentic" value={finalReport.authenticity_score} />
+        <ScoreTile label="Follow-up" value={finalReport.follow_up_invitation_score} />
+      </div>
+
+      <div className="mt-4 rounded-xl bg-cream-200 p-4 text-sm text-slate-600">
+        <p className="font-semibold text-slate-900">Why it ended</p>
+        <p className="mt-1">{finalReport.natural_ending_reason}</p>
+      </div>
+
+      <BulletList title="Strengths" items={finalReport.strengths} />
+      <BulletList title="Growth edges" items={finalReport.growth_edges} />
+
+      <div className="mt-4 rounded-xl border border-navy-100 bg-navy-50 p-4 text-sm text-navy-900">
+        <p className="font-semibold">Next focus</p>
+        <p className="mt-1">{finalReport.next_focus}</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onReset}
+        className="mt-5 inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-navy-600"
+      >
+        <RotateCcw className="h-4 w-4" />
+        Start again
+      </button>
+      </div>
+    </section>
+  );
+}
 function StatusPill({
   label,
   tone,
@@ -670,23 +707,22 @@ function StatusPill({
         : 'bg-cream-100 text-slate-600';
   return <span className={`rounded-full px-3 py-1.5 text-xs font-medium ${toneClass}`}>{label}</span>;
 }
-
 function ScoreTile({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-2xl bg-cream-50 p-3">
+    <div className="rounded-xl bg-cream-200 p-3">
       <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-900">{Math.round(value)}</p>
+      <p className="mt-1.5 text-2xl font-semibold text-slate-900">{Math.round(value)}</p>
     </div>
   );
 }
 
 function BulletList({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="mt-4">
+    <div>
       <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{title}</p>
-      <div className="mt-2 space-y-2">
+      <div className="mt-2 space-y-1.5">
         {items.map((item) => (
-          <div key={item} className="rounded-2xl bg-cream-50 px-3 py-2 text-sm text-slate-700">
+          <div key={item} className="rounded-lg bg-cream-200 px-3 py-2 text-sm leading-5 text-slate-700">
             {item}
           </div>
         ))}

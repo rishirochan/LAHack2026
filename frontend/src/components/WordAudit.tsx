@@ -203,10 +203,10 @@ export function WordAudit({ transcriptWords, fillerWordsFound }: WordAuditProps)
 
   if (!chips.length) {
     return (
-      <div className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm">
+      <div className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm">
         <div className="flex items-center gap-2 text-slate-700">
           <BookOpenText size={16} className="text-navy-500" />
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Word Audit</p>
+          <p className="text-xs uppercase tracking-widest text-slate-400">Word Audit</p>
         </div>
         <p className="mt-4 text-sm leading-6 text-slate-500">
           No transcript data is available for word-level analysis.
@@ -224,15 +224,15 @@ export function WordAudit({ transcriptWords, fillerWordsFound }: WordAuditProps)
       initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.32 }}
-      className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm"
+      className="rounded-2xl border border-cream-300 bg-cream-50 p-6 shadow-sm"
     >
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-slate-700">
             <BookOpenText size={16} className="text-navy-500" />
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Word Audit</p>
+            <p className="text-xs uppercase tracking-widest text-slate-400">Word Audit</p>
           </div>
-          <h3 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+          <h3 className="mt-2 font-serif text-2xl font-semibold text-slate-900">
             Color-coded transcript
           </h3>
         </div>
@@ -291,7 +291,7 @@ export function WordAudit({ transcriptWords, fillerWordsFound }: WordAuditProps)
             transition={{ duration: 0.22 }}
             className="overflow-hidden"
           >
-            <div className={`rounded-[22px] border p-5 ${
+            <div className={`rounded-xl border p-5 ${
               selectedChip.category === 'filler'
                 ? 'border-amber-200 bg-amber-50/50'
                 : selectedChip.category === 'repeated'
@@ -335,7 +335,7 @@ export function WordAudit({ transcriptWords, fillerWordsFound }: WordAuditProps)
       </AnimatePresence>
 
       {!hasColoredChips && (
-        <div className="mt-5 rounded-[22px] bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+        <div className="mt-5 rounded-xl bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
           Your transcript is clean — no filler words, repetition, or notable patterns were flagged.
         </div>
       )}

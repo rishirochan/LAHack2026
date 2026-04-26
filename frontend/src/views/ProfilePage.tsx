@@ -535,7 +535,7 @@ export default function ProfilePage() {
   if (state.status === 'error') {
     return (
       <div className="mx-auto max-w-lg rounded-3xl border border-red-200 bg-white p-8 text-center shadow-sm">
-        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+        <h1 className="font-serif text-2xl font-semibold text-slate-900">
           Could not load profile
         </h1>
         <p className="mt-3 text-sm text-slate-500">{state.message}</p>
@@ -560,7 +560,7 @@ export default function ProfilePage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-['Playfair_Display'] text-3xl font-semibold text-slate-900">
+          <h1 className="font-serif text-3xl font-semibold text-slate-900">
             Your Profile
           </h1>
           <p className="mt-1 text-sm text-slate-500">

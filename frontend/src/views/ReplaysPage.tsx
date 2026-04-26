@@ -246,7 +246,7 @@ function ReplayChunkAccordion({ title, subtitle, items }: {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{title}</p>
-          <h3 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+          <h3 className="mt-2 font-serif text-2xl font-semibold text-slate-900">
             Expand a recording chunk
           </h3>
         </div>
@@ -701,7 +701,7 @@ export default function ReplaysPage() {
   return (
     <div className="mx-auto max-w-4xl">
       <div className="mb-8">
-        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+        <h1 className="font-serif text-2xl font-semibold text-slate-900">
           Replays
         </h1>
         <p className="mt-1 text-sm text-slate-500">
@@ -733,7 +733,7 @@ export default function ReplaysPage() {
             />
           )) : (
             <div className="rounded-[28px] border border-cream-300 bg-white p-8 text-center shadow-sm">
-              <p className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+              <p className="font-serif text-2xl font-semibold text-slate-900">
                 No sessions yet
               </p>
               <p className="mt-2 text-sm text-slate-500">
@@ -762,7 +762,7 @@ export default function ReplaysPage() {
                   </div>
                 )}
                 <div>
-                  <h2 className="font-['Playfair_Display'] text-2xl text-slate-900">
+                  <h2 className="font-serif text-2xl text-slate-900">
                     {dialogTitle}
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">{dialogDescription}</p>
