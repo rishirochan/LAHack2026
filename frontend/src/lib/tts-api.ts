@@ -52,8 +52,9 @@ export async function fetchVoiceOptions(): Promise<VoiceOption[]> {
 }
 
 export async function fetchVoicePreviewAudio(input: {
-  voiceId: string;
+  voiceId?: string | null;
   voiceName: string;
+  text?: string;
 }): Promise<Blob> {
   const response = await fetch(`${API_URL}/api/tts/preview`, {
     method: 'POST',
@@ -61,6 +62,7 @@ export async function fetchVoicePreviewAudio(input: {
     body: JSON.stringify({
       voice_id: input.voiceId,
       voice_name: input.voiceName,
+      text: input.text,
     }),
   });
 

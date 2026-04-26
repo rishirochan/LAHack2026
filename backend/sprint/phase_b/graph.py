@@ -37,22 +37,11 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
 
     try:
         if not session_state.get("peer_profile"):
-            setup_fallback = {
-                "scenario": session_state.get("scenario_preference") or "casual",
-                "peer_profile": {
-                    "name": "Jordan",
-                    "role": "new classmate",
-                    "vibe": "friendly but observant",
-                    "energy": "medium",
-                    "conversation_goal": "get to know the user and see whether the conversation keeps flowing",
-                    "scenario": session_state.get("scenario_preference") or "casual",
-                },
-                "starter_topic": "how the week has been going and what has felt energizing lately",
-                "opening_line": "Hey, I am Jordan. What has been the most interesting part of your week so far?",
-            }
+            setup_fallback = _build_setup_fallback(session_state)
             setup = await _generate_json(
                 system_prompt=SETUP_SYSTEM_PROMPT,
                 user_prompt=build_setup_user(
+                    practice_prompt=session_state.get("practice_prompt"),
                     scenario_preference=session_state.get("scenario_preference"),
                 ),
                 fallback=setup_fallback,
@@ -74,6 +63,7 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
                 config,
                 "session_initialized",
                 {
+                    "practice_prompt": session_state.get("practice_prompt"),
                     "scenario": scenario,
                     "peer_profile": peer_profile,
                     "starter_topic": starter_topic,
@@ -452,6 +442,75 @@ def _coerce_peer_profile(value: Any, fallback: dict[str, str]) -> dict[str, str]
         "conversation_goal": str(data.get("conversation_goal") or fallback["conversation_goal"]),
         "scenario": str(data.get("scenario") or fallback["scenario"]),
     }
+
+
+def _build_setup_fallback(session_state: PhaseBState) -> dict[str, Any]:
+    practice_prompt = str(session_state.get("practice_prompt") or "").strip()
+    scenario = _infer_scenario(
+        practice_prompt=practice_prompt,
+        scenario_preference=session_state.get("scenario_preference"),
+    )
+    role_by_scenario = {
+        "interview": "hiring manager",
+        "negotiation": "counterpart",
+        "networking": "alum contact",
+        "roommate": "roommate",
+        "casual": "conversation partner",
+    }
+    vibe_by_scenario = {
+        "interview": "focused, thoughtful, and a little probing",
+        "negotiation": "calm, strategic, and direct",
+        "networking": "warm, curious, and encouraging",
+        "roommate": "honest, slightly tense, but open to resolving things",
+        "casual": "friendly but observant",
+    }
+    goal_by_scenario = {
+        "interview": "understand whether the user is thoughtful, prepared, and easy to work with",
+        "negotiation": "understand the user's priorities and test how they handle tradeoffs",
+        "networking": "learn what the user wants and decide how helpful to be",
+        "roommate": "clear the air and figure out a better way forward",
+        "casual": "understand the user and keep the exchange flowing naturally",
+    }
+    opening_by_scenario = {
+        "interview": "Thanks for making the time today. To start, can you tell me about yourself and what drew you to this opportunity?",
+        "negotiation": "Thanks for making time. Before we get into details, what outcome are you hoping for here?",
+        "networking": "Glad we could connect. What made this the right conversation for you to have right now?",
+        "roommate": "Can we talk through what's been feeling off lately and what you'd like to change?",
+        "casual": "Let's jump in. What feels most important for us to talk through today?",
+    }
+    starter_topic = (
+        practice_prompt
+        or "the situation the user wants to rehearse and the most important thing they need to communicate"
+    )
+    return {
+        "scenario": scenario,
+        "peer_profile": {
+            "name": "Jordan",
+            "role": role_by_scenario[scenario],
+            "vibe": vibe_by_scenario[scenario],
+            "energy": "medium",
+            "conversation_goal": goal_by_scenario[scenario],
+            "scenario": scenario,
+        },
+        "starter_topic": starter_topic,
+        "opening_line": opening_by_scenario[scenario],
+    }
+
+
+def _infer_scenario(*, practice_prompt: str, scenario_preference: str | None) -> str:
+    if scenario_preference:
+        return str(scenario_preference)
+
+    normalized = practice_prompt.lower()
+    if any(keyword in normalized for keyword in ("interview", "recruiter", "hiring manager", "onsite")):
+        return "interview"
+    if any(keyword in normalized for keyword in ("salary", "offer", "negot", "client", "sales", "contract")):
+        return "negotiation"
+    if any(keyword in normalized for keyword in ("coffee chat", "network", "alum", "mentor", "linkedin")):
+        return "networking"
+    if any(keyword in normalized for keyword in ("roommate", "housemate", "apartment", "rent", "chores")):
+        return "roommate"
+    return "casual"
 
 
 def _fallback_turn_analysis(*, transcript: str, analysis_status: str) -> TurnAnalysis:

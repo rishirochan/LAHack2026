@@ -2,7 +2,7 @@
 
 from typing import Any, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -25,6 +25,15 @@ SessionStatus = Literal[
     "complete",
     "error",
 ]
+
+PRACTICE_PROMPT_WORD_LIMIT = 60
+
+
+def _count_words(value: str) -> int:
+    normalized = " ".join(value.split()).strip()
+    if not normalized:
+        return 0
+    return len(normalized.split(" "))
 
 
 class PeerProfile(TypedDict):
@@ -117,6 +126,7 @@ class PhaseBState(TypedDict):
     """Full session state carried through LangGraph and the session store."""
 
     session_id: str
+    practice_prompt: str | None
     scenario: str | None
     scenario_preference: Scenario | None
     voice_id: str | None
@@ -141,11 +151,13 @@ def build_initial_state(
     max_turns: int = 6,
     minimum_turns: int = 3,
     voice_id: str | None = None,
+    practice_prompt: str | None = None,
 ) -> PhaseBState:
     """Create the default state for a new Phase B session."""
 
     return {
         "session_id": session_id,
+        "practice_prompt": practice_prompt,
         "scenario": None,
         "scenario_preference": scenario_preference,
         "voice_id": voice_id,
@@ -190,16 +202,33 @@ def build_turn_state(turn_index: int, prompt_text: str) -> TurnState:
 class StartConversationRequest(BaseModel):
     """Body for POST /api/phase-b/sessions."""
 
+    practice_prompt: str | None = None
     scenario_preference: Scenario | None = None
     voice_id: str | None = None
     max_turns: int = Field(default=6, ge=3, le=8)
     minimum_turns: int = Field(default=3, ge=3, le=5)
+
+    @field_validator("practice_prompt")
+    @classmethod
+    def validate_practice_prompt(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = " ".join(value.split()).strip()
+        if not normalized:
+            return None
+        if _count_words(normalized) > PRACTICE_PROMPT_WORD_LIMIT:
+            raise ValueError(
+                f"Practice prompt must be {PRACTICE_PROMPT_WORD_LIMIT} words or fewer."
+            )
+        return normalized
 
 
 class NextTurnRequest(BaseModel):
     """Optional per-turn overrides for the next peer reply."""
 
     voice_id: str | None = None
+    speak_peer_message: bool = True
 
 
 class StartConversationResponse(BaseModel):
@@ -213,6 +242,7 @@ class SessionStateResponse(BaseModel):
     """Full session state returned by GET /api/phase-b/sessions/{id}."""
 
     session_id: str
+    practice_prompt: str | None
     scenario: str | None
     scenario_preference: Scenario | None
     voice_id: str | None

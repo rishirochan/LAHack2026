@@ -1,12 +1,14 @@
 """FastAPI app for sprint backend features."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from urllib.parse import quote
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from urllib.parse import quote
 
+from elevenlabs.core.api_error import ApiError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -65,6 +67,69 @@ RETRY_INVALID_CHUNKS_MESSAGE = "Some recording chunks were missing or overlapped
 PHASE_A_MEDIA_KINDS = {"video", "audio"}
 PHASE_B_MEDIA_KINDS = {"video", "audio"}
 PHASE_C_MEDIA_KINDS = {"video", "audio"}
+
+
+def _normalize_upstream_error_body(body: object) -> dict[str, object]:
+    if isinstance(body, dict):
+        return body
+    if isinstance(body, str):
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            return {"message": body}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"message": body}
+    return {}
+
+
+def _extract_upstream_error_fields(error: ApiError) -> tuple[str, str]:
+    body = _normalize_upstream_error_body(error.body)
+    detail = body.get("detail")
+
+    if isinstance(detail, dict):
+        status = str(detail.get("status") or "").strip()
+        message = str(
+            detail.get("message")
+            or detail.get("detail")
+            or body.get("message")
+            or ""
+        ).strip()
+        return status, message
+
+    if isinstance(detail, str):
+        return "", detail.strip()
+
+    message = str(body.get("message") or "").strip()
+    return "", message
+
+
+def _elevenlabs_transcription_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, ApiError):
+        upstream_status = int(error.status_code or 0)
+        upstream_error, upstream_message = _extract_upstream_error_fields(error)
+
+        if upstream_error == "missing_permissions" and "speech_to_text" in upstream_message:
+            return HTTPException(
+                status_code=503,
+                detail=(
+                    "Speech transcription is unavailable because the configured ElevenLabs API key "
+                    "does not include the speech_to_text permission. Update ELEVENLABS_API_KEY to "
+                    "a key with Speech-to-Text access."
+                ),
+            )
+
+        if upstream_status in {401, 403}:
+            detail = "Speech transcription is unavailable because the configured ElevenLabs API key was rejected."
+            if upstream_message:
+                detail = f"{detail} Upstream said: {upstream_message}"
+            return HTTPException(status_code=503, detail=detail)
+
+        if upstream_message:
+            return HTTPException(status_code=502, detail=f"Transcription failed: {upstream_message}")
+
+    return HTTPException(status_code=502, detail=f"Transcription failed: {error}")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -159,9 +224,6 @@ async def preview_tts_voice(payload: dict[str, object]) -> Response:
     voice_id = str(payload.get("voice_id") or "").strip() or None
     voice_name = str(payload.get("voice_name") or "").strip()
     text = str(payload.get("text") or "").strip() or _build_voice_preview_text(voice_name)
-
-    if voice_id is None:
-        raise HTTPException(status_code=400, detail="A voice_id is required to preview TTS.")
 
     try:
         audio = await synthesize_tts_audio(
@@ -721,6 +783,7 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
     """Create a new Phase B conversation session."""
 
     session = get_phase_b_manager().create_session(
+        practice_prompt=request.practice_prompt,
         scenario_preference=request.scenario_preference,
         voice_id=request.voice_id,
         max_turns=request.max_turns,
@@ -740,6 +803,7 @@ async def get_phase_b_session(session_id: str) -> SessionStateResponse:
 
     return SessionStateResponse(
         session_id=state["session_id"],
+        practice_prompt=state.get("practice_prompt"),
         scenario=state["scenario"],
         scenario_preference=state.get("scenario_preference"),
         voice_id=state.get("voice_id"),
@@ -805,7 +869,9 @@ async def phase_b_next_turn(
     )
 
     updated = get_phase_b_manager().get_state(session_id)
-    await stream_peer_tts(session_id)
+    should_speak_peer_message = True if request is None else bool(request.speak_peer_message)
+    if should_speak_peer_message:
+        await stream_peer_tts(session_id)
 
     await get_phase_b_manager().send_event(
         session_id,
@@ -941,7 +1007,7 @@ async def phase_b_transcribe(
             audio_source=transcript_audio_upload,
         )
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"Transcription failed: {error}") from error
+        raise _elevenlabs_transcription_http_error(error) from error
 
     get_phase_b_manager().store_transcript(session_id, turn_index, transcript, words)
 
@@ -1258,7 +1324,10 @@ async def phase_c_transcribe(session_id: str, audio_file: UploadFile = File(...)
     if not file_id:
         raise HTTPException(status_code=500, detail="Transcript audio file identifier was missing.")
     async with get_media_store().materialize_temp_file(file_id=str(file_id), suffix=".webm") as audio_path:
-        transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+        try:
+            transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+        except Exception as error:
+            raise _elevenlabs_transcription_http_error(error) from error
     get_phase_c_manager().store_transcript(session_id, transcript, words)
     return {"transcript": transcript, "word_count": len(words)}
 

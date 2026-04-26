@@ -177,6 +177,7 @@ class InMemorySessionRepository:
                 "updated_at": now,
                 "completed_at": now if state.get("status") == "complete" else None,
                 "setup": {
+                    "practice_prompt": state.get("practice_prompt"),
                     "scenario": state.get("scenario"),
                     "scenario_preference": state.get("scenario_preference"),
                     "voice_id": state.get("voice_id"),
@@ -216,6 +217,7 @@ class InMemorySessionRepository:
                     "updated_at": _now(),
                     "completed_at": _now() if status == "complete" else document.get("completed_at"),
                     "setup": {
+                        "practice_prompt": state.get("practice_prompt"),
                         "scenario": state.get("scenario"),
                         "scenario_preference": state.get("scenario_preference"),
                         "voice_id": state.get("voice_id"),
@@ -465,6 +467,7 @@ class MongoSessionRepository:
                     "status": state.get("status", "active"),
                     "updated_at": now,
                     "setup": {
+                        "practice_prompt": state.get("practice_prompt"),
                         "scenario": state.get("scenario"),
                         "scenario_preference": state.get("scenario_preference"),
                         "voice_id": state.get("voice_id"),
@@ -495,6 +498,7 @@ class MongoSessionRepository:
                 "updated_at": _now(),
                 "completed_at": _now() if status == "complete" else None,
                 "setup": {
+                    "practice_prompt": state.get("practice_prompt"),
                     "scenario": state.get("scenario"),
                     "scenario_preference": state.get("scenario_preference"),
                     "voice_id": state.get("voice_id"),
@@ -757,6 +761,7 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "session_id": state.get("session_id"),
+        "practice_prompt": state.get("practice_prompt"),
         "scenario": state.get("scenario"),
         "scenario_preference": state.get("scenario_preference"),
         "voice_id": state.get("voice_id"),

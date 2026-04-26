@@ -19,7 +19,8 @@ export type Persona = "interviewer" | "negotiator" | "friend" | "audience";
 export type SessionStatus = "active" | "complete" | "error";
 
 export interface StartConversationRequest {
-  scenario: Scenario;
+  practice_prompt?: string;
+  scenario_preference?: Scenario;
   max_turns?: number;
 }
 

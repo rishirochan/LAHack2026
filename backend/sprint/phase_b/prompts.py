@@ -2,8 +2,9 @@
 
 
 SETUP_SYSTEM_PROMPT = """\
-You are creating the setup for a social conversation simulator.
-Generate one realistic peer persona and one starter topic for the user.
+You are creating the setup for a conversation rehearsal simulator.
+The user will give you one short practice brief describing the real conversation they want to emulate.
+Infer the peer, their context, their personality, the likely stakes, and the most natural opening move from that brief.
 Return strict JSON with this exact shape:
 {
   "scenario": "interview | negotiation | casual | networking | roommate",
@@ -20,6 +21,8 @@ Return strict JSON with this exact shape:
 }
 
 Rules:
+- Every setup detail should be derived from the user's practice brief when possible.
+- If the brief mentions a company, event, or relationship, reflect that context in the peer and topic.
 - The peer should feel like one specific person, not a generic role.
 - The opening line should sound natural out loud and invite a response.
 - Keep the opening line under 35 words.
@@ -27,10 +30,12 @@ Rules:
 """
 
 
-def build_setup_user(*, scenario_preference: str | None) -> str:
+def build_setup_user(*, practice_prompt: str | None, scenario_preference: str | None) -> str:
     preference = scenario_preference or "no explicit preference"
+    brief = practice_prompt or "No practice brief was provided. Create a realistic general-purpose setup."
     return (
         "Generate a Phase B conversation setup.\n"
+        f"Practice brief: {brief}\n"
         f"Scenario preference: {preference}.\n"
         "Make the situation socially realistic and worth at least three back-and-forth turns."
     )

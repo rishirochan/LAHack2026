@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from elevenlabs.core.api_error import ApiError
 from fastapi.testclient import TestClient
 
 import backend.sprint.api as sprint_api
@@ -18,7 +19,7 @@ class PhaseBApiTests(unittest.TestCase):
         self.client = TestClient(sprint_api.app)
         self.manager = get_phase_b_manager()
         self.manager._sessions.clear()
-        self.session = self.manager.create_session("interview")
+        self.session = self.manager.create_session(scenario_preference="interview")
         self.manager.start_turn(self.session.session_id, "Tell me about yourself.")
 
     def tearDown(self) -> None:
@@ -88,6 +89,65 @@ class PhaseBApiTests(unittest.TestCase):
             pending_events[-1]["payload"]["message"],
             "The recording was empty. Check camera and microphone access.",
         )
+
+    def test_transcribe_returns_actionable_error_for_missing_speech_to_text_permission(self) -> None:
+        with patch(
+            "backend.sprint.phase_b.elevenlabs.transcribe_audio",
+            new=AsyncMock(
+                side_effect=ApiError(
+                    status_code=401,
+                    body={
+                        "detail": {
+                            "status": "missing_permissions",
+                            "message": "The API key you used is missing the permission speech_to_text to execute this operation.",
+                        }
+                    },
+                )
+            ),
+        ):
+            response = self.client.post(
+                self._transcribe_url(),
+                files={"audio_file": _file_payload("audio.webm", b"audio-bytes", "audio/webm")},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "Speech transcription is unavailable because the configured ElevenLabs API key does not include the "
+            "speech_to_text permission. Update ELEVENLABS_API_KEY to a key with Speech-to-Text access.",
+        )
+
+    def test_start_session_stores_practice_prompt(self) -> None:
+        self.manager._sessions.clear()
+
+        response = self.client.post(
+            "/api/phase-b/sessions",
+            json={
+                "practice_prompt": "I have a Roblox interview tomorrow and want to practice with a thoughtful hiring manager.",
+                "voice_id": "voice-42",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        session_id = response.json()["session_id"]
+        state = self.manager.get_state(session_id)
+        self.assertEqual(
+            state["practice_prompt"],
+            "I have a Roblox interview tomorrow and want to practice with a thoughtful hiring manager.",
+        )
+        self.assertEqual(state["voice_id"], "voice-42")
+
+    def test_start_session_rejects_prompt_over_word_limit(self) -> None:
+        self.manager._sessions.clear()
+        over_limit_prompt = " ".join(f"word{i}" for i in range(61))
+
+        response = self.client.post(
+            "/api/phase-b/sessions",
+            json={"practice_prompt": over_limit_prompt},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Practice prompt must be 60 words or fewer.", str(response.json()["detail"]))
 
     def test_complete_rejects_turn_with_no_chunks(self) -> None:
         critique_mock = AsyncMock(return_value={})
@@ -247,14 +307,15 @@ class PhaseBApiTests(unittest.TestCase):
                 "status": "done",
             },
         )
-        self.manager.store_transcript(self.session.session_id, "hello there", [])
+        self.manager.store_transcript(self.session.session_id, 0, "hello there", [])
 
         critique_mock = AsyncMock(return_value={})
         with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
             response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "turn_complete"})
+        self.assertEqual(response.json()["status"], "turn_complete")
+        self.assertTrue(response.json()["continue_conversation"])
         critique_mock.assert_awaited_once()
         state = self.manager.get_state(self.session.session_id)
         finished_turn = state["turns"][0]

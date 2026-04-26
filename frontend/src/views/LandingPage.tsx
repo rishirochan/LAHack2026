@@ -28,7 +28,7 @@ const features = [
     icon: MessageSquare,
     title: 'Conversation Modes',
     description:
-      'Choose interview, negotiation/sales, or coffee chat. AI generates a dynamic ~60 second back-and-forth. Same CV and audio pipeline plus sentiment analysis on transcript to check if words align with emotional delivery.',
+      'Describe the exact conversation you want to emulate, from a Roblox interview tomorrow to a tricky roommate talk. We infer the other person, their style, and the stakes, then run the same video, audio, and transcript analysis pipeline.',
     image: '/feature-conversation.jpg',
   },
   {

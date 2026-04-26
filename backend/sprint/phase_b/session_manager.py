@@ -44,11 +44,11 @@ class PhaseBSessionManager:
 
     def create_session(
         self,
-        *,
-        scenario_preference: str | None,
+        scenario_preference: str | None = None,
         max_turns: int = 6,
         minimum_turns: int = 3,
         voice_id: str | None = None,
+        practice_prompt: str | None = None,
     ) -> ActiveConversation:
         session_id = str(uuid4())
         state = build_initial_state(
@@ -57,6 +57,7 @@ class PhaseBSessionManager:
             voice_id=voice_id,
             max_turns=max_turns,
             minimum_turns=minimum_turns,
+            practice_prompt=practice_prompt,
         )
         session = ActiveConversation(session_id=session_id, state=state)
         self._sessions[session_id] = session
@@ -159,21 +160,36 @@ class PhaseBSessionManager:
         turn = self.get_turn(session_id, turn_index)
         return sorted(turn["chunks"], key=lambda chunk: (chunk["start_ms"], chunk["chunk_index"]))
 
-    def set_recording_window(self, session_id: str, turn_index: int, start_ms: int, end_ms: int) -> None:
+    def set_recording_window(
+        self,
+        session_id: str,
+        turn_index_or_start_ms: int,
+        start_ms_or_end_ms: int,
+        end_ms: int | None = None,
+    ) -> None:
+        if end_ms is None:
+            turn_index = self._current_turn_index(session_id)
+            start_ms = turn_index_or_start_ms
+            recording_end_ms = start_ms_or_end_ms
+        else:
+            turn_index = turn_index_or_start_ms
+            start_ms = start_ms_or_end_ms
+            recording_end_ms = end_ms
         turn = self.get_turn(session_id, turn_index)
         turn["recording_start_ms"] = start_ms
-        turn["recording_end_ms"] = end_ms
+        turn["recording_end_ms"] = recording_end_ms
         self.persist_state(session_id)
 
     def validate_turn_chunks(
         self,
         session_id: str,
         *,
-        turn_index: int,
+        turn_index: int | None = None,
         min_seconds: int,
         max_seconds: int,
     ) -> tuple[bool, str | None, dict[str, int] | None]:
-        chunks = self.get_sorted_chunks(session_id, turn_index)
+        resolved_turn_index = turn_index if turn_index is not None else self._current_turn_index(session_id)
+        chunks = self.get_sorted_chunks(session_id, resolved_turn_index)
         if not chunks:
             return False, "The recording was empty. Check camera and microphone access.", None
 
@@ -209,6 +225,15 @@ class PhaseBSessionManager:
             "recording_start_ms": recording_start_ms,
             "recording_end_ms": recording_end_ms,
         }
+
+    def _current_turn_index(self, session_id: str) -> int:
+        state = self.get_state(session_id)
+        current_turn = state.get("current_turn")
+        if current_turn is not None:
+            return int(current_turn["turn_index"])
+        if state["turns"]:
+            return int(state["turns"][-1]["turn_index"])
+        raise RuntimeError("No turn is available for this session.")
 
     def store_transcript(
         self,
