@@ -100,6 +100,61 @@ async def analyze_video_file(
     return normalized
 
 
+async def analyze_audio_file(
+    settings: AISettings,
+    file_path: str,
+    *,
+    title: str,
+    description: str,
+) -> dict[str, Any]:
+    """Upload a local audio file, wait for Imentiv analysis, and normalize it."""
+
+    os.environ.setdefault("IMENTIV_API_KEY", settings.imentiv_api_key)
+    client = get_imentiv_client()
+    try:
+        upload_result = await asyncio.to_thread(
+            client.audio.upload,
+            file_path,
+            title=title,
+            description=description,
+        )
+    except ImentivAuthenticationError:
+        logger.exception("Imentiv authentication failed while uploading %s.", Path(file_path).name)
+        raise RuntimeError("Imentiv authentication failed. Check IMENTIV_API_KEY.") from None
+
+    logger.debug("Imentiv audio upload response keys=%s", sorted(upload_result.keys()))
+    audio_id = extract_audio_id(upload_result)
+    await asyncio.sleep(0.75)
+
+    try:
+        results = await asyncio.to_thread(
+            client.audio.get_results,
+            audio_id,
+            wait=True,
+            poll_interval=1.5,
+        )
+    except ImentivAuthenticationError:
+        logger.exception("Imentiv authentication failed while polling audio %s.", audio_id)
+        raise RuntimeError("Imentiv authentication failed. Check IMENTIV_API_KEY.") from None
+
+    logger.debug(
+        "Imentiv audio analysis response keys=%s status=%s",
+        sorted(results.keys()),
+        results.get("status"),
+    )
+    if str(results.get("status") or "").lower() == "failed":
+        raise RuntimeError(f"Imentiv analysis failed for audio {audio_id}.")
+
+    transcript_segments = await asyncio.to_thread(fetch_audio_segments, settings, str(audio_id))
+    normalized = normalize_imentiv_results(
+        results,
+        transcript_segments=transcript_segments,
+        include_video=False,
+    )
+    normalized["audio_id"] = audio_id
+    return normalized
+
+
 def wait_for_audio_analysis(client: ImentivClient, video_id: str, initial_results: dict[str, Any]) -> dict[str, Any]:
     """Imentiv can mark video complete before audio/speaker fields appear."""
 
@@ -142,6 +197,16 @@ def extract_video_id(upload_result: Any) -> str:
     if not video_id:
         raise RuntimeError("Imentiv upload response did not include a video_id.")
     return str(video_id)
+
+
+def extract_audio_id(upload_result: Any) -> str:
+    """Read an audio id from either new or legacy Imentiv upload responses."""
+
+    data = _to_mapping(upload_result)
+    audio_id = data.get("audio_id") or data.get("id")
+    if not audio_id:
+        raise RuntimeError("Imentiv upload response did not include an audio_id.")
+    return str(audio_id)
 
 
 def fetch_audio_segments(settings: AISettings, audio_id: str) -> list[dict[str, Any]]:
@@ -199,6 +264,7 @@ def normalize_imentiv_results(
     results: Any,
     *,
     transcript_segments: list[dict[str, Any]] | None = None,
+    include_video: bool = True,
 ) -> dict[str, Any]:
     """Convert Imentiv's multimodal response into the app's analysis shape."""
 
@@ -212,18 +278,27 @@ def normalize_imentiv_results(
             if isinstance(segment, dict)
         ).strip()
 
-    dominant_emotion = _normalize_dominant_emotion(data.get("dominant_emotion"))
-    video_emotions = extract_emotion_events(data, preferred_keys=("video_emotions", "emotion_analysis", "emotions"))
+    dominant = _normalize_dominant_emotion(data.get("dominant_emotion"))
+    video_emotions = (
+        extract_emotion_events(data, preferred_keys=("video_emotions", "emotion_analysis", "emotions"))
+        if include_video
+        else []
+    )
     audio_emotions = extract_emotion_events(data, preferred_keys=("audio", "audio_emotions"))
     text_emotions = extract_emotion_events(data, preferred_keys=("text", "text_emotions"))
-    scores = _extract_or_derive_scores(data, video_emotions + audio_emotions + text_emotions)
+    if not text_emotions:
+        text_emotions = _derive_text_emotions_from_segments(transcript_segments)
+    blended_emotions = audio_emotions + text_emotions + (video_emotions if include_video else [])
+    scores = _extract_or_derive_scores(data, blended_emotions)
+    if not dominant:
+        dominant = dominant_emotion(blended_emotions)
 
     return {
         "status": data.get("status"),
         "transcript": transcript,
         "transcript_segments": transcript_segments,
         "summary": data.get("summary"),
-        "dominant_emotion": dominant_emotion,
+        "dominant_emotion": dominant,
         "confidence_score": scores["confidence_score"],
         "clarity_score": scores["clarity_score"],
         "resilience_score": scores["resilience_score"],
@@ -396,6 +471,40 @@ def _normalize_dominant_emotion(value: Any) -> str | None:
         label = data.get("name") or data.get("label") or data.get("emotion_type")
         return str(label) if label else None
     return None
+
+
+def _derive_text_emotions_from_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        raw_emotions = segment.get("raw_emotions")
+        if isinstance(raw_emotions, list):
+            for emotion in raw_emotions:
+                item = _to_mapping(emotion)
+                label = item.get("label") or item.get("emotion") or item.get("name")
+                if not label:
+                    continue
+                events.append(
+                    {
+                        "emotion_type": str(label),
+                        "confidence": float(item.get("score") or item.get("confidence") or 0),
+                        "timestamp": int(float(segment.get("start") or 0) * 1000),
+                        "is_aggregate": False,
+                        "source": "transcript_segment",
+                    }
+                )
+        elif segment.get("emotion"):
+            events.append(
+                {
+                    "emotion_type": str(segment.get("emotion")),
+                    "confidence": 1.0,
+                    "timestamp": int(float(segment.get("start") or 0) * 1000),
+                    "is_aggregate": False,
+                    "source": "transcript_segment",
+                }
+            )
+    return events
 
 
 def _to_mapping(value: Any) -> dict[str, Any]:

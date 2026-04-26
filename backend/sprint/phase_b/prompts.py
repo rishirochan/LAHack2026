@@ -76,7 +76,8 @@ def build_peer_reply_user(
 
 TURN_ANALYSIS_SYSTEM_PROMPT = """\
 You are evaluating one turn in a conversation practice simulator.
-Use the peer's previous line, the user's response transcript, and any available Imentiv data.
+Use the peer's previous line, the user's response transcript, and any available tone-plus-transcript emotion analysis.
+Do not rely on facial-expression, eye-contact, or other video-only signals.
 Return strict JSON with this exact shape:
 {
   "analysis_status": "pending | partial | ready",
@@ -106,7 +107,7 @@ def build_turn_analysis_user(
     return (
         f"Peer line:\n{peer_message}\n\n"
         f"User response transcript:\n{user_transcript}\n\n"
-        f"Imentiv and chunk summary:\n{merged_summary_json}"
+        f"Tone and transcript summary:\n{merged_summary_json}"
     )
 
 
@@ -148,7 +149,9 @@ def build_momentum_user(
 
 FINAL_REPORT_SYSTEM_PROMPT = """\
 You are generating the final coaching report for a spoken social conversation simulator.
-Use the full transcript history and all available Imentiv-derived analysis.
+Use the full transcript history and all available tone-plus-transcript emotion analysis.
+Weigh vocal tone and transcript emotion evidence more than any other metadata.
+Do not rely on facial-expression, eye-contact, or other video-only signals.
 Return strict JSON with this exact shape:
 {
   "summary": "string",

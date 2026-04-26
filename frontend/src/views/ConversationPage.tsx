@@ -136,6 +136,13 @@ export default function ConversationPage() {
 
   async function handleEnd() {
     setLocalError('');
+    stopTimer();
+    setIsRecording(false);
+    stopRecordersWithoutUpload(videoRecorderRef.current, audioCaptureRef.current);
+    videoRecorderRef.current = null;
+    audioCaptureRef.current = null;
+    videoChunksRef.current = [];
+    stopTracks();
     try {
       await endSession();
     } catch {

@@ -4,7 +4,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from imentiv import ImentivClient
-from backend.shared.imentiv import extract_video_id, extract_transcript_segments, normalize_imentiv_results
+from backend.shared.imentiv import (
+    extract_audio_id,
+    extract_transcript_segments,
+    extract_video_id,
+    normalize_imentiv_results,
+)
 
 
 class FakeResponse:
@@ -63,6 +68,12 @@ class ImentivIntegrationTests(unittest.TestCase):
         self.assertEqual(extract_video_id({"id": "legacy-id"}), "legacy-id")
         with self.assertRaisesRegex(RuntimeError, "video_id"):
             extract_video_id({"status": "processing"})
+
+    def test_extract_audio_id_accepts_audio_id_or_id(self) -> None:
+        self.assertEqual(extract_audio_id({"audio_id": "new-id"}), "new-id")
+        self.assertEqual(extract_audio_id({"id": "legacy-id"}), "legacy-id")
+        with self.assertRaisesRegex(RuntimeError, "audio_id"):
+            extract_audio_id({"status": "processing"})
 
     def test_polling_treats_transient_processing_errors_as_waitable(self) -> None:
         client = ImentivClient(api_key="test-key", timeout=120, max_retries=3)
@@ -143,6 +154,25 @@ class ImentivIntegrationTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_normalize_audio_only_results_omits_video_emotions(self) -> None:
+        normalized = normalize_imentiv_results(
+            {"status": "completed", "audio": {"happy": 0.8}, "text": {}},
+            transcript_segments=[
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "I am excited.",
+                    "emotion": "optimism",
+                    "raw_emotions": [{"label": "optimism", "score": 0.9}],
+                }
+            ],
+            include_video=False,
+        )
+
+        self.assertEqual(normalized["video_emotions"], [])
+        self.assertTrue(normalized["text_emotions"])
+        self.assertEqual(normalized["text_emotions"][0]["emotion_type"], "optimism")
 
 
 if __name__ == "__main__":

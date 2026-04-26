@@ -99,6 +99,9 @@ class PhaseBSessionManager:
         state["voice_id"] = voice_id
         self.persist_state(session_id)
 
+    def is_active(self, session_id: str) -> bool:
+        return self.get_state(session_id).get("status") == "active"
+
     def has_active_turn(self, session_id: str) -> bool:
         return self.get_state(session_id).get("current_turn") is not None
 
@@ -110,6 +113,8 @@ class PhaseBSessionManager:
         """Initialize a new turn after prompt generation."""
 
         state = self.get_state(session_id)
+        if state["status"] != "active":
+            raise RuntimeError("Session is not active.")
         turn = build_turn_state(state["turn_index"], prompt_text)
         state["current_turn"] = turn
         state["conversation_history"].append({"role": "assistant", "content": prompt_text})
@@ -257,6 +262,16 @@ class PhaseBSessionManager:
         turn["transcript_audio_upload"] = upload_ref
         self.persist_state(session_id)
 
+    def store_imentiv_analysis(
+        self,
+        session_id: str,
+        turn_index: int,
+        analysis: dict[str, Any] | None,
+    ) -> None:
+        turn = self.get_turn(session_id, turn_index)
+        turn["imentiv_analysis"] = analysis
+        self.persist_state(session_id)
+
     def store_turn_analysis(
         self,
         session_id: str,
@@ -295,6 +310,28 @@ class PhaseBSessionManager:
         state = self.get_state(session_id)
         state["final_report"] = report
         self.persist_state(session_id)
+
+    def discard_active_turn(self, session_id: str) -> bool:
+        state = self.get_state(session_id)
+        current = state.get("current_turn")
+        if current is None:
+            return False
+
+        prompt_text = str(current.get("prompt_text") or "")
+        state["current_turn"] = None
+        if prompt_text and state["conversation_history"]:
+            last_entry = state["conversation_history"][-1]
+            if last_entry.get("role") == "assistant" and last_entry.get("content") == prompt_text:
+                state["conversation_history"].pop()
+        self.persist_state(session_id)
+        return True
+
+    def begin_session_shutdown(self, session_id: str) -> PhaseBState:
+        state = self.get_state(session_id)
+        self.discard_active_turn(session_id)
+        state["status"] = "complete"
+        self.persist_state(session_id)
+        return state
 
     def end_session(self, session_id: str) -> PhaseBState:
         state = self.get_state(session_id)

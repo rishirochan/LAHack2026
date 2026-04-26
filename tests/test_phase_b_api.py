@@ -323,6 +323,53 @@ class PhaseBApiTests(unittest.TestCase):
         self.assertEqual(finished_turn["recording_end_ms"], 10000)
         self.assertEqual(state["turn_index"], 1)
 
+    def test_complete_uses_transcript_audio_upload_for_tone_analysis(self) -> None:
+        self.manager.add_chunk(
+            self.session.session_id,
+            {
+                "chunk_index": 0,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "mediapipe_metrics": {},
+                "video_emotions": [],
+                "audio_emotions": [],
+                "text_emotions": [],
+                "status": "done",
+            },
+        )
+        transcript_upload = {
+            "file_id": "turn-audio-file",
+            "storage_key": "phase_b/test/turn_0/transcript_audio.webm",
+            "filename": "transcript_audio.webm",
+            "original_filename": "turn-audio.webm",
+            "mime_type": "audio/webm",
+            "size_bytes": 123,
+            "uploaded_at": "2026-04-25T00:00:00+00:00",
+        }
+        self.manager.store_transcript_upload(self.session.session_id, 0, transcript_upload)
+        self.manager.store_transcript(self.session.session_id, 0, "hello there", [])
+
+        critique_mock = AsyncMock(return_value={})
+        analyze_audio_mock = AsyncMock(
+            return_value={
+                "status": "completed",
+                "audio_emotions": [{"emotion_type": "calm", "confidence": 0.8}],
+                "text_emotions": [{"emotion_type": "optimism", "confidence": 0.7}],
+                "transcript_segments": [],
+            }
+        )
+        with (
+            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
+            patch("backend.sprint.phase_b.imentiv.analyze_audio", analyze_audio_mock),
+        ):
+            response = self.client.post(self._complete_url())
+
+        self.assertEqual(response.status_code, 200)
+        analyze_audio_mock.assert_awaited_once()
+        self.assertEqual(analyze_audio_mock.await_args.args[1], transcript_upload)
+        state = self.manager.get_state(self.session.session_id)
+        self.assertEqual(state["turns"][0]["imentiv_analysis"]["status"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()

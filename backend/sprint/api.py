@@ -863,20 +863,34 @@ async def phase_b_next_turn(
         get_phase_b_manager().set_voice_id(session_id, request.voice_id)
         state = get_phase_b_manager().get_state(session_id)
 
-    await prompt_graph.ainvoke(
+    result = await prompt_graph.ainvoke(
         state,
         config={"configurable": {"session_id": session_id}},
     )
 
     updated = get_phase_b_manager().get_state(session_id)
+    if updated["status"] != "active":
+        return {"status": "session_complete"}
+    if updated.get("current_turn") is None:
+        detail = "Could not generate the next peer turn."
+        if isinstance(result, dict) and result.get("error"):
+            detail = str(result["error"])
+        raise HTTPException(status_code=500, detail=detail)
+
     should_speak_peer_message = True if request is None else bool(request.speak_peer_message)
     if should_speak_peer_message:
         await stream_peer_tts(session_id)
 
+    refreshed = get_phase_b_manager().get_state(session_id)
+    if refreshed["status"] != "active":
+        return {"status": "session_complete"}
+    if refreshed.get("current_turn") is None:
+        raise HTTPException(status_code=409, detail="The active turn ended before recording could begin.")
+
     await get_phase_b_manager().send_event(
         session_id,
         "recording_ready",
-        {"max_seconds": PHASE_B_MAX_SECONDS, "turn_index": updated["turn_index"]},
+        {"max_seconds": PHASE_B_MAX_SECONDS, "turn_index": refreshed["turn_index"]},
     )
 
     return {"status": "prompt_sent"}
@@ -949,16 +963,12 @@ async def phase_b_upload_chunk(
         "mediapipe_metrics": mp_metrics,
         "video_emotions": None,
         "audio_emotions": None,
-        "status": "pending",
+        "text_emotions": None,
+        "status": "done",
         "video_upload": video_upload,
         "audio_upload": audio_upload,
     }
     get_phase_b_manager().add_chunk(session_id, chunk_record)
-
-    # Launch background Imentiv processing
-    asyncio.create_task(
-        _process_phase_b_chunk(session_id, turn_index, chunk_index, video_upload, audio_upload)
-    )
 
     return {"status": "accepted", "chunk_index": str(chunk_index)}
 
@@ -1053,6 +1063,8 @@ async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, o
         recording_window["recording_end_ms"],
     )
 
+    await _process_phase_b_turn_audio(session_id, turn_index)
+
     await critique_graph.ainvoke(
         state,
         config={"configurable": {"session_id": session_id}},
@@ -1089,7 +1101,9 @@ async def phase_b_end_session(session_id: str) -> dict[str, object]:
     """Finalize the session and return summary."""
 
     try:
-        state = get_phase_b_manager().get_state(session_id)
+        manager = get_phase_b_manager()
+        manager.begin_session_shutdown(session_id)
+        state = manager.get_state(session_id)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -1132,6 +1146,39 @@ async def download_phase_b_transcript_audio(session_id: str, turn_index: int) ->
     return await _build_media_response(media_ref)
 
 
+async def _process_phase_b_turn_audio(
+    session_id: str,
+    turn_index: int,
+) -> None:
+    """Analyze the full-turn transcript audio using audio tone + transcript emotion signals."""
+
+    from backend.shared.ai import get_settings
+    from backend.sprint.phase_b.imentiv import analyze_audio
+
+    manager = get_phase_b_manager()
+    settings = get_settings()
+    turn = manager.get_turn(session_id, turn_index)
+    audio_upload = turn.get("transcript_audio_upload")
+    if not isinstance(audio_upload, dict):
+        manager.store_imentiv_analysis(session_id, turn_index, None)
+        return
+
+    try:
+        analysis = await analyze_audio(
+            settings,
+            audio_upload,
+            title=f"phase-b-{session_id}-turn-{turn_index}",
+            description="Phase B conversation turn tone and transcript analysis.",
+        )
+        manager.store_imentiv_analysis(session_id, turn_index, analysis)
+    except Exception as error:
+        manager.store_imentiv_analysis(
+            session_id,
+            turn_index,
+            {"status": "failed", "error": str(error), "video_emotions": [], "audio_emotions": [], "text_emotions": []},
+        )
+
+
 async def _process_phase_b_chunk(
     session_id: str,
     turn_index: int,
@@ -1139,31 +1186,9 @@ async def _process_phase_b_chunk(
     video_upload: dict[str, object],
     audio_upload: dict[str, object],
 ) -> None:
-    """Background task: upload to Imentiv, poll for results, update chunk."""
+    """Deprecated compatibility shim for tests and older code paths."""
 
-    from backend.shared.ai import get_settings
-    from backend.sprint.phase_b.imentiv import analyze_video
-
-    manager = get_phase_b_manager()
-    settings = get_settings()
-
-    try:
-        manager.update_chunk(session_id, turn_index, chunk_index, {"status": "processing"})
-        analysis = await analyze_video(
-            settings,
-            video_upload,
-            title=f"phase-b-{session_id}-turn-{turn_index}-chunk-{chunk_index}",
-            description="Phase B conversation chunk analysis.",
-        )
-
-        manager.update_chunk(session_id, turn_index, chunk_index, {
-            "imentiv_analysis": analysis,
-            "video_emotions": analysis.get("video_emotions") if isinstance(analysis.get("video_emotions"), list) else [],
-            "audio_emotions": analysis.get("audio_emotions") if isinstance(analysis.get("audio_emotions"), list) else [],
-            "status": "done",
-        })
-    except Exception as error:
-        manager.update_chunk(session_id, turn_index, chunk_index, {"status": "failed", "error": str(error)})
+    return None
 
 
 async def _soft_result(awaitable):

@@ -98,6 +98,7 @@ class ChunkRecord(TypedDict):
     mediapipe_metrics: dict[str, Any]
     video_emotions: list[dict[str, Any]] | None
     audio_emotions: list[dict[str, Any]] | None
+    text_emotions: NotRequired[list[dict[str, Any]] | None]
     status: ChunkStatus
     video_upload: NotRequired[dict[str, Any] | None]
     audio_upload: NotRequired[dict[str, Any] | None]
@@ -116,6 +117,7 @@ class TurnState(TypedDict):
     transcript: str | None
     transcript_words: list[dict[str, Any]] | None
     transcript_audio_upload: dict[str, Any] | None
+    imentiv_analysis: dict[str, Any] | None
     merged_summary: dict[str, Any] | None
     turn_analysis: TurnAnalysis | None
     analysis_status: TurnAnalysisStatus
@@ -188,6 +190,7 @@ def build_turn_state(turn_index: int, prompt_text: str) -> TurnState:
         "transcript": None,
         "transcript_words": None,
         "transcript_audio_upload": None,
+        "imentiv_analysis": None,
         "merged_summary": None,
         "turn_analysis": None,
         "analysis_status": "pending",

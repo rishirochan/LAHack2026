@@ -126,6 +126,13 @@ class PhaseBValidationTests(unittest.TestCase):
         self.assertEqual(current_turn["recording_start_ms"], 0)
         self.assertEqual(current_turn["recording_end_ms"], 10000)
 
+    def test_begin_session_shutdown_discards_incomplete_turn(self) -> None:
+        state = self.manager.begin_session_shutdown(self.session.session_id)
+
+        self.assertEqual(state["status"], "complete")
+        self.assertIsNone(state["current_turn"])
+        self.assertEqual(state["conversation_history"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

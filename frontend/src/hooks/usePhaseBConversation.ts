@@ -117,6 +117,7 @@ export function usePhaseBConversation(options?: {
   const skipPeerAudioRef = useRef(false);
   const playPeerVoiceRef = useRef(playPeerVoice);
   const audioPlaybackTokenRef = useRef(0);
+  const endRequestedRef = useRef(false);
   const stopActiveAudioForLifecycle = useEffectEvent(() => {
     stopActiveAudio();
   });
@@ -147,6 +148,7 @@ export function usePhaseBConversation(options?: {
   }, []);
 
   async function startSession(promptText?: string | null) {
+    endRequestedRef.current = false;
     clearSurface();
     setStatus('starting');
     setErrorMessage('');
@@ -187,6 +189,9 @@ export function usePhaseBConversation(options?: {
     const activeSessionId = idOverride ?? sessionId;
     if (!activeSessionId) {
       throw new Error('No active session.');
+    }
+    if (endRequestedRef.current) {
+      return;
     }
 
     setStatus('starting');
@@ -294,6 +299,10 @@ export function usePhaseBConversation(options?: {
       setFinalReport(completeData.final_report);
     }
 
+    if (endRequestedRef.current) {
+      return;
+    }
+
     if (completeData.continue_conversation) {
       await requestNextTurn(sessionId);
       return;
@@ -307,23 +316,33 @@ export function usePhaseBConversation(options?: {
       return;
     }
 
+    endRequestedRef.current = true;
+    haltLiveConversation();
     setStatus('processing');
     setProcessingStage('Building final report');
-    const response = await fetch(`${API_URL}/api/phase-b/sessions/${sessionId}/end`, {
-      method: 'POST',
-    });
 
-    if (!response.ok) {
-      const detail = await safeDetail(response);
-      throw new Error(detail || 'Could not end the conversation.');
-    }
+    try {
+      const response = await fetch(`${API_URL}/api/phase-b/sessions/${sessionId}/end`, {
+        method: 'POST',
+      });
 
-    const data = (await response.json()) as { final_report?: FinalReport | null };
-    if (data.final_report) {
-      setFinalReport(data.final_report);
+      if (!response.ok) {
+        const detail = await safeDetail(response);
+        throw new Error(detail || 'Could not end the conversation.');
+      }
+
+      const data = (await response.json()) as { final_report?: FinalReport | null };
+      if (data.final_report) {
+        setFinalReport(data.final_report);
+      }
+      websocketRef.current?.close();
+      websocketRef.current = null;
+      await refreshSession(sessionId);
+      setStatus('complete');
+    } catch (error) {
+      endRequestedRef.current = false;
+      throw error;
     }
-    await refreshSession(sessionId);
-    setStatus('complete');
   }
 
   async function refreshSession(idOverride?: string) {
@@ -359,6 +378,10 @@ export function usePhaseBConversation(options?: {
   }
 
   function handleEvent(event: WebsocketEvent) {
+    if (endRequestedRef.current && event.type !== 'session_complete' && event.type !== 'error') {
+      return;
+    }
+
     switch (event.type) {
       case 'session_initialized':
         setScenario(String(event.payload.scenario ?? ''));
@@ -421,6 +444,8 @@ export function usePhaseBConversation(options?: {
         void refreshSession();
         break;
       case 'session_complete':
+        endRequestedRef.current = true;
+        haltLiveConversation();
         if (event.payload.final_report) {
           setFinalReport(event.payload.final_report as FinalReport);
         }
@@ -439,10 +464,10 @@ export function usePhaseBConversation(options?: {
   async function playBufferedPeerAudio() {
     const base64Chunks = audioChunksRef.current.slice();
     audioChunksRef.current = [];
-    if (skipPeerAudioRef.current || base64Chunks.length === 0) {
+    if (endRequestedRef.current || skipPeerAudioRef.current || base64Chunks.length === 0) {
       peerSpeakingRef.current = false;
       setIsPeerSpeaking(false);
-      if (pendingRecordingReadyRef.current) {
+      if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
         pendingRecordingReadyRef.current = false;
         setStatus('recording');
       }
@@ -458,7 +483,7 @@ export function usePhaseBConversation(options?: {
         setReplayingTurnIndex(null);
         peerSpeakingRef.current = false;
         setIsPeerSpeaking(false);
-        if (pendingRecordingReadyRef.current) {
+        if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
           pendingRecordingReadyRef.current = false;
           setStatus('recording');
         }
@@ -470,7 +495,7 @@ export function usePhaseBConversation(options?: {
       setReplayingTurnIndex(null);
       peerSpeakingRef.current = false;
       setIsPeerSpeaking(false);
-      if (pendingRecordingReadyRef.current) {
+      if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
         pendingRecordingReadyRef.current = false;
         setStatus('recording');
       }
@@ -483,7 +508,7 @@ export function usePhaseBConversation(options?: {
     stopActiveAudio();
     peerSpeakingRef.current = false;
     setIsPeerSpeaking(false);
-    if (pendingRecordingReadyRef.current) {
+    if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
       pendingRecordingReadyRef.current = false;
       setStatus('recording');
     }
@@ -535,6 +560,8 @@ export function usePhaseBConversation(options?: {
     setFinalReport(data.final_report);
 
     if (data.status === 'complete') {
+      endRequestedRef.current = true;
+      haltLiveConversation();
       setStatus('complete');
     }
   }
@@ -596,6 +623,15 @@ export function usePhaseBConversation(options?: {
     detachAudioElement(audio);
   }
 
+  function haltLiveConversation() {
+    stopActiveAudio();
+    audioChunksRef.current = [];
+    pendingRecordingReadyRef.current = false;
+    skipPeerAudioRef.current = true;
+    peerSpeakingRef.current = false;
+    setIsPeerSpeaking(false);
+  }
+
   function clearSurface() {
     setPracticePrompt(null);
     setScenario(null);
@@ -608,6 +644,7 @@ export function usePhaseBConversation(options?: {
     setErrorMessage('');
     setMaxRecordingSeconds(45);
     setReplayingTurnIndex(null);
+    endRequestedRef.current = false;
     peerSpeakingRef.current = false;
     setIsPeerSpeaking(false);
     audioChunksRef.current = [];
