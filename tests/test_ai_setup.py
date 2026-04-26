@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 
 def _set_required_env() -> None:
-    os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
-    os.environ["OPENROUTER_MODEL_GEMMA"] = "test/gemma"
+    os.environ["GOOGLE_API_KEY"] = "test-google-key"
+    os.environ["GOOGLE_GEMMA_MODEL"] = "test-gemma-model"
     os.environ["ELEVENLABS_API_KEY"] = "test-elevenlabs-key"
     os.environ["ELEVENLABS_DEFAULT_VOICE_ID"] = "voice-test"
     os.environ["ELEVENLABS_STT_MODEL"] = "scribe_v1"
@@ -38,26 +38,26 @@ class AISetupSmokeTests(unittest.TestCase):
         from backend.shared.ai.settings import validate_settings
 
         settings = validate_settings()
-        self.assertEqual(settings.openrouter_model_gemma, "test/gemma")
-        self.assertEqual(settings.google_ai_api_key, "")
+        self.assertEqual(settings.google_gemma_model, "test-gemma-model")
+        self.assertEqual(settings.google_api_key, "test-google-key")
         self.assertEqual(settings.elevenlabs_stt_model, "scribe_v1")
 
     @patch("backend.shared.ai.service.create_elevenlabs_client", return_value=object())
-    @patch("backend.shared.ai.service.create_gemma_model", return_value=object())
+    @patch("backend.shared.ai.service.create_gemma_client", return_value=object())
     def test_ai_service_facade_initializes(
         self,
         _mock_gemma,
         _mock_elevenlabs,
     ) -> None:
         service = self.get_ai_service()
-        self.assertIsNotNone(service.gemma_model)
+        self.assertIsNotNone(service.gemma_client)
         self.assertIsNotNone(service.elevenlabs_client)
 
 
 def _dependencies_available() -> bool:
     return all(
         find_spec(module_name) is not None
-        for module_name in ("langchain_openai", "elevenlabs")
+        for module_name in ("google.genai", "elevenlabs")
     )
 
 

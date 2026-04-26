@@ -4,24 +4,32 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
-class _FakeModel:
-    def __init__(self, content):
-        self._content = content
+class _FakeGenerateContentAPI:
+    def __init__(self, response):
+        self._response = response
 
-    async def ainvoke(self, _prompt: str):
-        return SimpleNamespace(content=self._content)
+    async def generate_content(self, *, model: str, contents: str):
+        return self._response
+
+
+class _FakeClient:
+    def __init__(self, response):
+        self.aio = SimpleNamespace(
+            models=_FakeGenerateContentAPI(response),
+        )
 
 
 class PhaseAGemmaTests(unittest.TestCase):
-    def test_generate_text_uses_openrouter_model(self) -> None:
+    def test_generate_text_uses_google_gemma_model(self) -> None:
         from backend.sprint.phase_a.gemma import _generate_text
 
         settings = SimpleNamespace(
-            openrouter_api_key="test-openrouter-key",
-            openrouter_model_gemma="test/gemma",
+            google_api_key="test-google-key",
+            google_gemma_model="test-gemma-model",
         )
 
-        with patch("backend.sprint.phase_a.gemma.create_gemma_model", return_value=_FakeModel("scenario text")):
+        fake_response = SimpleNamespace(text="scenario text")
+        with patch("backend.sprint.phase_a.gemma.create_gemma_client", return_value=_FakeClient(fake_response)):
             result = asyncio.run(_generate_text(settings=settings, prompt="hello"))
 
         self.assertEqual(result, "scenario text")
@@ -30,11 +38,12 @@ class PhaseAGemmaTests(unittest.TestCase):
         from backend.sprint.phase_a.gemma import _generate_text
 
         settings = SimpleNamespace(
-            openrouter_api_key="test-openrouter-key",
-            openrouter_model_gemma="test/gemma",
+            google_api_key="test-google-key",
+            google_gemma_model="test-gemma-model",
         )
 
-        with patch("backend.sprint.phase_a.gemma.create_gemma_model", return_value=_FakeModel("")):
+        fake_response = SimpleNamespace(text="")
+        with patch("backend.sprint.phase_a.gemma.create_gemma_client", return_value=_FakeClient(fake_response)):
             with self.assertRaisesRegex(RuntimeError, "empty response"):
                 asyncio.run(_generate_text(settings=settings, prompt="hello"))
 

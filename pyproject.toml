@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings",
     "python-multipart",
     "python-dotenv",
+    "pytest",
     "requests",
     "uvicorn",
     "grandalf>=0.8",
@@ -25,3 +26,6 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["backend*", "imentiv*"]
 exclude = ["frontend*", "tests*", "vendor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
