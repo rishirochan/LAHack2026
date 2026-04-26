@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import certifi
+
 from backend.shared.db.media_store import InMemoryMediaStore, MediaStore, MongoGridFSMediaStore
 from backend.shared.db.repository import InMemorySessionRepository, MongoSessionRepository, SessionRepository
 from backend.shared.db.settings import DatabaseSettings, get_database_settings
@@ -28,7 +30,10 @@ async def init_database(settings: DatabaseSettings | None = None) -> SessionRepo
     except ImportError as error:
         raise RuntimeError("Install the 'motor' package to enable MongoDB persistence.") from error
 
-    client: Any = AsyncIOMotorClient(settings.mongodb_uri)
+    client: Any = AsyncIOMotorClient(
+        settings.mongodb_uri,
+        tlsCAFile=certifi.where(),
+    )
     repository = MongoSessionRepository(client, settings.mongodb_db_name)
     media_store = MongoGridFSMediaStore(client[settings.mongodb_db_name])
     await repository.ensure_indexes()

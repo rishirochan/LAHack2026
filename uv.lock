@@ -343,6 +343,7 @@ name = "lahacks26"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "elevenlabs" },
     { name = "fastapi" },
     { name = "grandalf" },
@@ -362,6 +363,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi" },
     { name = "elevenlabs" },
     { name = "fastapi" },
     { name = "grandalf", specifier = ">=0.8" },
