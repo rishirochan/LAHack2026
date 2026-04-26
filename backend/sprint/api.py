@@ -1135,7 +1135,7 @@ async def phase_b_next_turn(
     """Generate the next AI prompt and stream it as TTS over the websocket.
 
     This runs the ``prompt_graph`` LangGraph subgraph which calls Gemma via
-    OpenRouter, then streams the result through ElevenLabs TTS.
+    Google GenAI, then streams the result through ElevenLabs TTS.
     """
 
     try:

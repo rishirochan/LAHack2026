@@ -12,12 +12,8 @@ class AISettings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    openrouter_api_key: str = ""
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model_gemma: str = "openrouter/gemma-placeholder"
-
-    google_ai_api_key: str = ""
-    google_gemma_model: str = "gemma-4"
+    google_api_key: str
+    google_gemma_model: str = "gemma-4-31b-it"
 
     elevenlabs_api_key: str
     elevenlabs_default_voice_id: str = "voice-placeholder"

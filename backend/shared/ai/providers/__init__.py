@@ -5,15 +5,17 @@ from backend.shared.ai.providers.elevenlabs import (
     get_default_voice_id,
     get_stt_model_name,
 )
-from backend.shared.ai.providers.openrouter import (
-    create_gemma_model,
-    create_openrouter_chat_model,
+from backend.shared.ai.providers.google_genai import (
+    create_gemma_client,
+    extract_text,
+    generate_gemma_text,
 )
 
 __all__ = [
     "create_elevenlabs_client",
-    "create_gemma_model",
-    "create_openrouter_chat_model",
+    "create_gemma_client",
+    "extract_text",
+    "generate_gemma_text",
     "get_default_voice_id",
     "get_stt_model_name",
 ]

@@ -2,9 +2,8 @@
 
 import json
 import logging
-from typing import Any
 
-from ...shared.ai.providers.openrouter import create_gemma_model
+from ...shared.ai.providers.google_genai import create_gemma_client, extract_text
 from ...shared.ai.settings import AISettings
 
 
@@ -65,46 +64,29 @@ async def generate_coach_critique(
 
 
 async def _generate_text(*, settings: AISettings, prompt: str) -> str:
-    """Call Gemma through the shared OpenRouter model client."""
+    """Call Gemma through the shared Google GenAI client."""
 
-    if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not configured for Gemma requests.")
+    if not settings.google_api_key:
+        raise RuntimeError("GOOGLE_API_KEY is not configured for Gemma requests.")
 
-    model = create_gemma_model(settings)
+    client = create_gemma_client(settings)
     try:
-        response = await model.ainvoke(prompt)
+        response = await client.aio.models.generate_content(
+            model=settings.google_gemma_model,
+            contents=prompt,
+        )
     except Exception as error:
         logger.exception(
-            "OpenRouter Gemma request failed for model %s.",
-            settings.openrouter_model_gemma,
+            "Google GenAI Gemma request failed for model %s.",
+            settings.google_gemma_model,
         )
-        raise RuntimeError(f"OpenRouter Gemma request failed: {error}") from error
+        raise RuntimeError(f"Google GenAI Gemma request failed: {error}") from error
 
-    text = _extract_text(getattr(response, "content", response))
+    text = extract_text(response)
     if not text:
         logger.error(
-            "OpenRouter Gemma returned an empty response for model %s.",
-            settings.openrouter_model_gemma,
+            "Google GenAI Gemma returned an empty response for model %s.",
+            settings.google_gemma_model,
         )
-        raise RuntimeError("OpenRouter Gemma returned an empty response.")
+        raise RuntimeError("Google GenAI Gemma returned an empty response.")
     return text
-
-
-def _extract_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-                continue
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "".join(parts).strip()
-
-    return str(content).strip() if content is not None else ""
-

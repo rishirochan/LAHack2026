@@ -1,7 +1,6 @@
 """Gemma summary helper for Phase C."""
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from backend.shared.ai.providers.google_genai import generate_gemma_text
 from backend.shared.ai.service import AIServiceFacade
 
 
@@ -22,19 +21,18 @@ async def generate_phase_c_summary(
     ai_service: AIServiceFacade,
     scorecard_json: str,
 ) -> str:
-    model = ai_service.gemma_model
-    if model is None:
+    client = ai_service.gemma_client
+    if client is None:
         raise RuntimeError(
             "Gemma model is not configured. "
-            "Set OPENROUTER_API_KEY and OPENROUTER_MODEL_GEMMA in .env."
+            "Set GOOGLE_API_KEY and GOOGLE_GEMMA_MODEL in .env."
         )
 
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=f"Scorecard JSON:\n{scorecard_json}"),
-    ]
-    response = await model.ainvoke(messages, temperature=0.3, max_tokens=220)
-    text = str(response.content).strip()
-    if not text:
-        raise RuntimeError("Gemma returned an empty response.")
-    return text
+    return await generate_gemma_text(
+        client=client,
+        model_name=ai_service.settings.google_gemma_model,
+        contents=f"Scorecard JSON:\n{scorecard_json}",
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.3,
+        max_output_tokens=220,
+    )

@@ -1,7 +1,6 @@
-"""Gemma 4 (via OpenRouter) helpers for Phase B conversations."""
+"""Gemma helpers for Phase B conversations."""
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from backend.shared.ai.providers.google_genai import generate_gemma_text
 from backend.shared.ai.service import AIServiceFacade
 
 
@@ -13,27 +12,20 @@ async def generate_text(
     temperature: float = 0.7,
     max_tokens: int = 512,
 ) -> str:
-    """Send a system + user prompt to Gemma via OpenRouter and return text."""
+    """Send a system + user prompt to Gemma via Google GenAI and return text."""
 
-    model = ai_service.gemma_model
-    if model is None:
+    client = ai_service.gemma_client
+    if client is None:
         raise RuntimeError(
             "Gemma model is not configured. "
-            "Set OPENROUTER_API_KEY and OPENROUTER_MODEL_GEMMA in .env."
+            "Set GOOGLE_API_KEY and GOOGLE_GEMMA_MODEL in .env."
         )
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ]
-
-    response = await model.ainvoke(
-        messages,
+    return await generate_gemma_text(
+        client=client,
+        model_name=ai_service.settings.google_gemma_model,
+        contents=user_prompt,
+        system_instruction=system_prompt,
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_output_tokens=max_tokens,
     )
-
-    text = str(response.content).strip()
-    if not text:
-        raise RuntimeError("Gemma returned an empty response.")
-    return text
