@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   ChevronDown,
   Loader2,
@@ -15,7 +16,6 @@ import {
 } from 'lucide-react';
 import {
   type ConversationTurn,
-  type FinalReport,
   type TurnAnalysis,
   usePhaseBConversation,
 } from '@/hooks/usePhaseBConversation';
@@ -59,11 +59,13 @@ const PRACTICE_PROMPT_EXAMPLES = [
 ];
 
 export default function ConversationPage() {
+  const router = useRouter();
   const { selectedVoiceId, speechRate } = useVoiceSettings();
   const [playPeerVoice, setPlayPeerVoice] = useState(true);
   const [isExamplesOpen, setIsExamplesOpen] = useState(false);
   const [practicePromptInput, setPracticePromptInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [isEndingRedirect, setIsEndingRedirect] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(45);
   const [localError, setLocalError] = useState('');
   const previewRef = useRef<HTMLVideoElement | null>(null);
@@ -76,13 +78,13 @@ export default function ConversationPage() {
   const timerRef = useRef<number | null>(null);
   const {
     status,
+    sessionId,
     practicePrompt,
     scenario,
     peerProfile,
     starterTopic,
     currentTurn,
     turns,
-    finalReport,
     processingStage,
     errorMessage,
     maxRecordingSeconds,
@@ -92,7 +94,6 @@ export default function ConversationPage() {
     replayPeerMessage,
     startSession,
     submitTurn,
-    endSession,
     resetAll,
   } = usePhaseBConversation({
     voiceId: selectedVoiceId,
@@ -135,7 +136,12 @@ export default function ConversationPage() {
   }
 
   async function handleEnd() {
+    if (!sessionId) {
+      return;
+    }
+
     setLocalError('');
+    setIsEndingRedirect(true);
     stopTimer();
     setIsRecording(false);
     stopRecordersWithoutUpload(videoRecorderRef.current, audioCaptureRef.current);
@@ -143,11 +149,7 @@ export default function ConversationPage() {
     audioCaptureRef.current = null;
     videoChunksRef.current = [];
     stopTracks();
-    try {
-      await endSession();
-    } catch {
-      setLocalError('Could not finish the session cleanly.');
-    }
+    router.push(`/conversation/report?sessionId=${encodeURIComponent(sessionId)}`);
   }
 
   function togglePeerVoice() {
@@ -300,6 +302,12 @@ export default function ConversationPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (status === 'setup') {
+      setIsEndingRedirect(false);
+    }
+  }, [status]);
+
   if (status === 'setup') {
     return (
       <div className="mx-auto max-w-6xl space-y-8">
@@ -444,11 +452,11 @@ export default function ConversationPage() {
             <button
               type="button"
               onClick={handleEnd}
-              disabled={status === 'complete' || status === 'starting'}
-              className="inline-flex items-center gap-2 rounded-full border border-cream-300 px-4 py-2 text-sm text-slate-700 transition hover:bg-cream-100 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={status === 'complete' || status === 'starting' || isEndingRedirect || !sessionId}
+              className="inline-flex items-center gap-2 rounded-full bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-red-300 disabled:text-red-50"
             >
-              <Power className="h-4 w-4" />
-              End
+              {isEndingRedirect ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              {isEndingRedirect ? 'Finishing' : 'End'}
             </button>
           </div>
         </div>
@@ -538,35 +546,15 @@ export default function ConversationPage() {
         </section>
 
         <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Peer Profile</h2>
-          {peerProfile ? (
-            <div className="mt-4 space-y-3 text-sm text-slate-600">
-              {practicePrompt ? <InfoPair label="Your brief" value={practicePrompt} /> : null}
-              <InfoPair label="Name" value={peerProfile.name} />
-              <InfoPair label="Role" value={peerProfile.role} />
-              <InfoPair label="Vibe" value={peerProfile.vibe} />
-              <InfoPair label="Energy" value={peerProfile.energy} />
-              <InfoPair label="Goal" value={peerProfile.conversation_goal} />
-            </div>
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Latest Turn</h2>
+          {turns.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">
+              Once you complete a few turns, the local analysis will show up here.
+            </p>
           ) : (
-            <p className="mt-3 text-sm text-slate-500">Generating the peer and topic.</p>
+            <TurnAnalysisCard turnAnalysis={turns[turns.length - 1].turn_analysis ?? null} />
           )}
         </section>
-
-        {status === 'complete' && finalReport ? (
-          <FinalReportCard finalReport={finalReport} onReset={resetAll} />
-        ) : (
-          <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Latest Turn</h2>
-            {turns.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-500">
-                Once you complete a few turns, the local analysis will show up here.
-              </p>
-            ) : (
-              <TurnAnalysisCard turnAnalysis={turns[turns.length - 1].turn_analysis ?? null} />
-            )}
-          </section>
-        )}
 
         {status === 'error' && (
           <button
@@ -667,52 +655,6 @@ function TurnAnalysisCard({ turnAnalysis }: { turnAnalysis: TurnAnalysis | null 
   );
 }
 
-function FinalReportCard({
-  finalReport,
-  onReset,
-}: {
-  finalReport: FinalReport;
-  onReset: () => void;
-}) {
-  return (
-    <section className="rounded-3xl border border-cream-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Final Report</h2>
-      <p className="mt-4 text-sm leading-6 text-slate-700">{finalReport.summary}</p>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <ScoreTile label="Momentum" value={finalReport.conversation_momentum_score} />
-        <ScoreTile label="Content" value={finalReport.content_quality_score} />
-        <ScoreTile label="Delivery" value={finalReport.emotional_delivery_score} />
-        <ScoreTile label="Energy" value={finalReport.energy_match_score} />
-        <ScoreTile label="Authentic" value={finalReport.authenticity_score} />
-        <ScoreTile label="Follow-up" value={finalReport.follow_up_invitation_score} />
-      </div>
-
-      <div className="mt-4 rounded-2xl bg-cream-50 p-4 text-sm text-slate-600">
-        <p className="font-semibold text-slate-900">Why it ended</p>
-        <p className="mt-1">{finalReport.natural_ending_reason}</p>
-      </div>
-
-      <BulletList title="Strengths" items={finalReport.strengths} />
-      <BulletList title="Growth edges" items={finalReport.growth_edges} />
-
-      <div className="mt-4 rounded-2xl border border-navy-100 bg-navy-50 p-4 text-sm text-navy-900">
-        <p className="font-semibold">Next focus</p>
-        <p className="mt-1">{finalReport.next_focus}</p>
-      </div>
-
-      <button
-        type="button"
-        onClick={onReset}
-        className="mt-5 inline-flex items-center gap-2 rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-navy-600"
-      >
-        <RotateCcw className="h-4 w-4" />
-        Start another session
-      </button>
-    </section>
-  );
-}
-
 function StatusPill({
   label,
   tone,
@@ -727,15 +669,6 @@ function StatusPill({
         ? 'bg-red-50 text-red-600'
         : 'bg-cream-100 text-slate-600';
   return <span className={`rounded-full px-3 py-1.5 text-xs font-medium ${toneClass}`}>{label}</span>;
-}
-
-function InfoPair({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{label}</p>
-      <p className="mt-1 text-sm text-slate-700">{value}</p>
-    </div>
-  );
 }
 
 function ScoreTile({ label, value }: { label: string; value: number }) {

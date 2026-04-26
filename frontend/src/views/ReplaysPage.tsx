@@ -105,6 +105,78 @@ function formatPercent(value: unknown) {
   return Number.isFinite(number) ? `${number}%` : '--';
 }
 
+type PhaseBFinalReport = {
+  summary: string;
+  natural_ending_reason: string;
+  conversation_momentum_score: number;
+  content_quality_score: number;
+  emotional_delivery_score: number;
+  energy_match_score: number;
+  authenticity_score: number;
+  follow_up_invitation_score: number;
+  strengths: string[];
+  growth_edges: string[];
+  next_focus: string;
+};
+
+function coerceStringArray(value: unknown) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function getPhaseBFinalReport(summary: Record<string, unknown>): PhaseBFinalReport | null {
+  const candidate = isRecord(summary.final_report) ? summary.final_report : null;
+  if (!candidate) {
+    return null;
+  }
+
+  const summaryText = typeof candidate.summary === 'string' ? candidate.summary.trim() : '';
+  const nextFocus = typeof candidate.next_focus === 'string' ? candidate.next_focus.trim() : '';
+  if (!summaryText && !nextFocus) {
+    return null;
+  }
+
+  return {
+    summary: summaryText,
+    natural_ending_reason:
+      typeof candidate.natural_ending_reason === 'string' ? candidate.natural_ending_reason : '',
+    conversation_momentum_score: Number(candidate.conversation_momentum_score) || 0,
+    content_quality_score: Number(candidate.content_quality_score) || 0,
+    emotional_delivery_score: Number(candidate.emotional_delivery_score) || 0,
+    energy_match_score: Number(candidate.energy_match_score) || 0,
+    authenticity_score: Number(candidate.authenticity_score) || 0,
+    follow_up_invitation_score: Number(candidate.follow_up_invitation_score) || 0,
+    strengths: coerceStringArray(candidate.strengths),
+    growth_edges: coerceStringArray(candidate.growth_edges),
+    next_focus: nextFocus,
+  };
+}
+
+function getPhaseBTurnCritique(turn: Record<string, unknown>) {
+  const directCritique = typeof turn.critique === 'string' ? turn.critique.trim() : '';
+  if (directCritique) {
+    return directCritique;
+  }
+
+  const turnAnalysis = isRecord(turn.turn_analysis) ? turn.turn_analysis : null;
+  const analysisSummary = typeof turnAnalysis?.summary === 'string' ? turnAnalysis.summary.trim() : '';
+  if (analysisSummary) {
+    return analysisSummary;
+  }
+
+  const analysisStatus =
+    turn.analysis_status === 'ready' || turn.analysis_status === 'partial' || turn.analysis_status === 'pending'
+      ? turn.analysis_status
+      : null;
+
+  if (analysisStatus === 'pending') {
+    return 'Turn analysis was still pending when this replay was saved.';
+  }
+  if (analysisStatus === 'partial') {
+    return 'Partial turn analysis was saved, but no summary text was available for this replay.';
+  }
+  return 'No critique stored for this turn.';
+}
+
 function MarkdownCritique({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -216,6 +288,35 @@ function ReplayChunkAccordion({ title, subtitle, items }: {
           </AccordionItem>
         ))}
       </Accordion>
+    </div>
+  );
+}
+
+function ScoreTile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-[24px] bg-cream-50 p-4">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="mt-3 text-3xl font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function BulletList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-[28px] border border-cream-200 bg-white p-5">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{title}</p>
+      {items.length ? (
+        <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`} className="flex gap-3">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-navy-500" />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-4 text-sm text-slate-500">No notes stored.</p>
+      )}
     </div>
   );
 }
@@ -354,6 +455,7 @@ function PhaseAReplayDetail({ session }: { session: PersistedSession }) {
 function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
   const summary = getSessionSummary(session);
   const setup = isRecord(session.setup) ? session.setup : {};
+  const finalReport = getPhaseBFinalReport(summary);
   const turns = Array.isArray(summary.turns)
     ? summary.turns.filter((turn): turn is Record<string, unknown> => isRecord(turn))
     : [];
@@ -408,7 +510,7 @@ function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
                 {String(turn.prompt || 'Prompt unavailable')}
               </p>
               <div className="mt-3">
-                <MarkdownCritique content={String(turn.critique || 'No critique stored for this turn.')} />
+                <MarkdownCritique content={getPhaseBTurnCritique(turn)} />
               </div>
             </div>
           )) : (
@@ -416,6 +518,53 @@ function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
           )}
         </div>
       </div>
+
+      {finalReport ? (
+        <div className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Final Report</p>
+              <h3 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+                Conversation closeout
+              </h3>
+            </div>
+            <Badge className="border-cream-200 bg-cream-50 px-3 py-1.5 text-slate-700">
+              Stored with replay
+            </Badge>
+          </div>
+
+          <p className="mt-5 text-base leading-7 text-slate-700">{finalReport.summary}</p>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <ScoreTile label="Momentum" value={finalReport.conversation_momentum_score} />
+            <ScoreTile label="Content" value={finalReport.content_quality_score} />
+            <ScoreTile label="Delivery" value={finalReport.emotional_delivery_score} />
+            <ScoreTile label="Energy" value={finalReport.energy_match_score} />
+            <ScoreTile label="Authenticity" value={finalReport.authenticity_score} />
+            <ScoreTile label="Follow-up" value={finalReport.follow_up_invitation_score} />
+          </div>
+
+          <div className="mt-6 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-[28px] bg-cream-50 p-5">
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Why it ended</p>
+              <p className="mt-3 text-sm leading-6 text-slate-700">
+                {finalReport.natural_ending_reason || 'No ending note stored for this conversation.'}
+              </p>
+            </div>
+            <div className="rounded-[28px] border border-navy-100 bg-navy-50 p-5">
+              <p className="text-xs font-semibold uppercase tracking-widest text-navy-500">Next focus</p>
+              <p className="mt-3 text-sm leading-6 text-navy-900">
+                {finalReport.next_focus || 'No next focus stored for this conversation.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-5 lg:grid-cols-2">
+            <BulletList title="Strengths" items={finalReport.strengths} />
+            <BulletList title="Growth edges" items={finalReport.growth_edges} />
+          </div>
+        </div>
+      ) : null}
 
       {chunkItems.length ? (
         <ReplayChunkAccordion
