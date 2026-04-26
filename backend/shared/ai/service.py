@@ -3,7 +3,6 @@
 from functools import lru_cache
 
 from backend.shared.ai.providers.elevenlabs import create_elevenlabs_client
-from backend.shared.ai.providers.google_genai import create_gemma_client
 from backend.shared.ai.settings import AISettings, get_settings
 
 
@@ -12,7 +11,11 @@ class AIServiceFacade:
 
     def __init__(self, settings: AISettings):
         self.settings = settings
-        self.gemma_client = create_gemma_client(settings) if settings.google_api_key else None
+        self.gemma_client = None
+        if settings.google_api_key:
+            from backend.shared.ai.providers.google_genai import create_gemma_client
+
+            self.gemma_client = create_gemma_client(settings)
         self.elevenlabs_client = create_elevenlabs_client(settings)
 
 

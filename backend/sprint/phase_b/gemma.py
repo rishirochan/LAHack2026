@@ -1,6 +1,5 @@
 """Gemma helpers for Phase B conversations."""
 
-from backend.shared.ai.providers.google_genai import generate_gemma_text
 from backend.shared.ai.service import AIServiceFacade
 
 
@@ -20,6 +19,8 @@ async def generate_text(
             "Gemma model is not configured. "
             "Set GOOGLE_API_KEY and GOOGLE_GEMMA_MODEL in .env."
         )
+
+    from backend.shared.ai.providers.google_genai import generate_gemma_text
 
     return await generate_gemma_text(
         client=client,

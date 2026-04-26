@@ -91,6 +91,14 @@ class SessionRepository(Protocol):
     async def get_profile_summary(self, *, user_id: str | None = DEFAULT_USER_ID) -> dict[str, Any]:
         ...
 
+    async def backfill_phase_b_overall_scores(
+        self,
+        *,
+        user_id: str | None = DEFAULT_USER_ID,
+        overwrite: bool = False,
+    ) -> dict[str, int]:
+        ...
+
     async def close(self) -> None:
         ...
 
@@ -346,6 +354,42 @@ class InMemorySessionRepository:
             if user_id is None or chunk.get("user_id") == user_id
         ]
         return _build_profile_summary(user_id=user_id or "all", sessions=sessions, chunks=chunks)
+
+    async def backfill_phase_b_overall_scores(
+        self,
+        *,
+        user_id: str | None = DEFAULT_USER_ID,
+        overwrite: bool = False,
+    ) -> dict[str, int]:
+        scanned = 0
+        updated = 0
+        skipped = 0
+
+        for document in self._documents.values():
+            if document.get("mode") != "phase_b":
+                continue
+            if user_id is not None and document.get("user_id") != user_id:
+                continue
+
+            scanned += 1
+            summary = document.get("summary")
+            if not isinstance(summary, dict):
+                skipped += 1
+                continue
+
+            if not overwrite and summary.get("overall_score") is not None:
+                skipped += 1
+                continue
+
+            overall_score = _phase_b_summary_overall_score(summary)
+            if overall_score is None:
+                skipped += 1
+                continue
+
+            summary["overall_score"] = overall_score
+            updated += 1
+
+        return {"scanned": scanned, "updated": updated, "skipped": skipped}
 
     async def close(self) -> None:
         return None
@@ -646,6 +690,45 @@ class MongoSessionRepository:
         ]
         return _build_profile_summary(user_id=user_id or "all", sessions=sessions, chunks=chunks)
 
+    async def backfill_phase_b_overall_scores(
+        self,
+        *,
+        user_id: str | None = DEFAULT_USER_ID,
+        overwrite: bool = False,
+    ) -> dict[str, int]:
+        session_filter: dict[str, Any] = {"mode": "phase_b"}
+        if user_id is not None:
+            session_filter["user_id"] = user_id
+
+        scanned = 0
+        updated = 0
+        skipped = 0
+
+        cursor = self._collection.find(session_filter, {"session_id": 1, "summary": 1})
+        async for document in cursor:
+            scanned += 1
+            summary = document.get("summary")
+            if not isinstance(summary, dict):
+                skipped += 1
+                continue
+
+            if not overwrite and summary.get("overall_score") is not None:
+                skipped += 1
+                continue
+
+            overall_score = _phase_b_summary_overall_score(summary)
+            if overall_score is None:
+                skipped += 1
+                continue
+
+            await self._collection.update_one(
+                {"session_id": document.get("session_id")},
+                {"$set": {"summary.overall_score": overall_score}},
+            )
+            updated += 1
+
+        return {"scanned": scanned, "updated": updated, "skipped": skipped}
+
     async def close(self) -> None:
         self._client.close()
 
@@ -759,6 +842,17 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
             if isinstance(summary.get("overall"), dict)
         ]
     )
+    chunks_failed = sum(
+        int((summary.get("overall") or {}).get("chunks_failed") or 0)
+        for summary in merged_summaries
+        if isinstance(summary, dict)
+    )
+    chunks_timed_out = sum(
+        int((summary.get("overall") or {}).get("chunks_timed_out") or 0)
+        for summary in merged_summaries
+        if isinstance(summary, dict)
+    )
+    final_report = _json_safe(state.get("final_report"))
     return {
         "session_id": state.get("session_id"),
         "practice_prompt": state.get("practice_prompt"),
@@ -771,20 +865,17 @@ def _phase_b_summary(state: dict[str, Any]) -> dict[str, Any]:
         "minimum_turns": state.get("minimum_turns"),
         "total_turns": len(turns),
         "avg_eye_contact_pct": round(sum(eye_contacts) / len(eye_contacts), 1) if eye_contacts else None,
+        "overall_score": _phase_b_overall_score(
+            final_report,
+            chunks_failed=chunks_failed,
+            chunks_timed_out=chunks_timed_out,
+        ),
         "dominant_video_emotion": dominant_video,
         "dominant_audio_emotion": dominant_audio,
         "momentum_decision": _json_safe(state.get("momentum_decision")),
-        "final_report": _json_safe(state.get("final_report")),
-        "chunks_failed": sum(
-            int((summary.get("overall") or {}).get("chunks_failed") or 0)
-            for summary in merged_summaries
-            if isinstance(summary, dict)
-        ),
-        "chunks_timed_out": sum(
-            int((summary.get("overall") or {}).get("chunks_timed_out") or 0)
-            for summary in merged_summaries
-            if isinstance(summary, dict)
-        ),
+        "final_report": final_report,
+        "chunks_failed": chunks_failed,
+        "chunks_timed_out": chunks_timed_out,
         "turns": [
             {
                 "turn_index": turn.get("turn_index"),
@@ -1024,6 +1115,60 @@ def _most_common(values: list[Any]) -> str | None:
     if not filtered:
         return None
     return Counter(filtered).most_common(1)[0][0]
+
+
+def _phase_b_overall_score(
+    final_report: Any,
+    *,
+    chunks_failed: int = 0,
+    chunks_timed_out: int = 0,
+) -> int | None:
+    if not isinstance(final_report, dict):
+        return None
+
+    metric_weights = {
+        "conversation_momentum_score": 0.24,
+        "content_quality_score": 0.22,
+        "emotional_delivery_score": 0.18,
+        "energy_match_score": 0.14,
+        "authenticity_score": 0.12,
+        "follow_up_invitation_score": 0.10,
+    }
+    weighted_total = 0.0
+    total_weight = 0.0
+
+    for key, weight in metric_weights.items():
+        try:
+            score = float(final_report.get(key))
+        except (TypeError, ValueError):
+            continue
+        weighted_total += max(0.0, min(100.0, score)) * weight
+        total_weight += weight
+
+    if total_weight <= 0:
+        return None
+
+    reliability_penalty = min(max(int(chunks_failed), 0) * 6 + max(int(chunks_timed_out), 0) * 3, 12)
+    overall_score = (weighted_total / total_weight) - reliability_penalty
+    return int(round(max(0.0, min(100.0, overall_score))))
+
+
+def _phase_b_summary_overall_score(summary: Any) -> int | None:
+    if not isinstance(summary, dict):
+        return None
+
+    existing_score = summary.get("overall_score")
+    if existing_score is not None:
+        try:
+            return int(round(float(existing_score)))
+        except (TypeError, ValueError):
+            return None
+
+    return _phase_b_overall_score(
+        summary.get("final_report"),
+        chunks_failed=int(summary.get("chunks_failed") or 0),
+        chunks_timed_out=int(summary.get("chunks_timed_out") or 0),
+    )
 
 
 def _sanitize_phase_a_state(state: dict[str, Any] | None) -> dict[str, Any] | None:

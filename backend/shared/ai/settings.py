@@ -12,7 +12,7 @@ class AISettings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    google_api_key: str
+    google_api_key: str = ""
     google_gemma_model: str = "gemma-4-31b-it"
 
     elevenlabs_api_key: str

@@ -151,6 +151,7 @@ FINAL_REPORT_SYSTEM_PROMPT = """\
 You are generating the final coaching report for a spoken social conversation simulator.
 Use the full transcript history and all available tone-plus-transcript emotion analysis.
 Weigh vocal tone and transcript emotion evidence more than any other metadata.
+Pay close attention to the per-turn emotion evidence payload so the final report reflects the actual audio and transcript results, not just the overall averages.
 Do not rely on facial-expression, eye-contact, or other video-only signals.
 Return strict JSON with this exact shape:
 {
@@ -168,6 +169,7 @@ Return strict JSON with this exact shape:
 }
 
 Scores must be 0-100 integers.
+If some tone or transcript emotion data is partial or missing, stay specific about what is available and avoid inventing unsupported details.
 Keep the summary under 70 words. The tone should be balanced and specific, not harsh.
 Do not include markdown fences or extra commentary.
 """
@@ -179,6 +181,7 @@ def build_final_report_user(
     starter_topic: str | None,
     conversation_history: list[dict[str, str]],
     turn_analyses: list[dict[str, object]],
+    emotion_evidence_json: str,
     aggregated_metrics_json: str,
     natural_ending_reason: str,
 ) -> str:
@@ -191,6 +194,7 @@ def build_final_report_user(
         f"Starter topic: {starter_topic or ''}\n"
         f"Natural ending reason: {natural_ending_reason}\n"
         f"Turn analyses: {turn_analyses}\n"
+        f"Per-turn tone and transcript evidence: {emotion_evidence_json}\n"
         f"Aggregated metrics: {aggregated_metrics_json}\n\n"
         f"Full conversation:\n{history}"
     )

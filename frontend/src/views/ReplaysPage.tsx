@@ -100,9 +100,17 @@ function formatReplayMeta(session: SessionPreview) {
   return session.status.replace('_', ' ');
 }
 
-function formatPercent(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${number}%` : '--';
+function formatScenarioLabel(value: unknown) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) {
+    return 'Conversation';
+  }
+
+  return text
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 type PhaseBFinalReport = {
@@ -456,6 +464,8 @@ function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
   const summary = getSessionSummary(session);
   const setup = isRecord(session.setup) ? session.setup : {};
   const finalReport = getPhaseBFinalReport(summary);
+  const overallScoreValue = Number(summary.overall_score);
+  const overallScore = Number.isFinite(overallScoreValue) ? Math.round(overallScoreValue) : null;
   const turns = Array.isArray(summary.turns)
     ? summary.turns.filter((turn): turn is Record<string, unknown> => isRecord(turn))
     : [];
@@ -478,13 +488,13 @@ function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
         <div className="rounded-2xl border border-cream-300 bg-white p-5">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Scenario</p>
           <p className="mt-3 text-xl font-semibold text-slate-900">
-            {String(setup.scenario || summary.scenario || 'Conversation')}
+            {formatScenarioLabel(setup.scenario || summary.scenario)}
           </p>
         </div>
         <div className="rounded-2xl border border-cream-300 bg-white p-5">
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Eye Contact</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Overall Score</p>
           <p className="mt-3 text-xl font-semibold text-slate-900">
-            {formatPercent(summary.avg_eye_contact_pct)}
+            {overallScore !== null ? `${overallScore}` : '--'}
           </p>
         </div>
         <div className="rounded-2xl border border-cream-300 bg-white p-5">

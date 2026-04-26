@@ -1,8 +1,15 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from backend.shared.db import InMemorySessionRepository, reset_session_repository
-from backend.sprint.phase_b.graph import _aggregate_final_metrics, analyze_turn, decide_momentum, merge_summary
+from backend.sprint.phase_b.graph import (
+    _aggregate_final_metrics,
+    analyze_turn,
+    decide_momentum,
+    generate_final_report,
+    merge_summary,
+)
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 
 
@@ -184,6 +191,93 @@ class PhaseBGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["dominant_audio_emotion"], "confidence")
         self.assertEqual(metrics["dominant_text_emotion"], "optimism")
         self.assertEqual(metrics["weighted_dominant_emotion"], "confidence")
+
+    async def test_generate_final_report_prompt_includes_per_turn_audio_emotion_evidence(self) -> None:
+        turn = self.manager.get_turn(self.session.session_id, 0)
+        turn["merged_summary"] = {
+            "analysis_basis": "audio_and_transcript",
+            "overall": {
+                "dominant_audio_emotion": "confidence",
+                "audio_confidence": 0.84,
+                "dominant_text_emotion": "optimism",
+                "text_confidence": 0.72,
+                "weighted_dominant_emotion": "confidence",
+                "weighted_confidence": 0.79,
+                "imentiv_status": "completed",
+                "analysis_ready": True,
+            },
+            "chunks": [
+                {
+                    "t_start": 0,
+                    "t_end": 5000,
+                    "status": "done",
+                    "dominant_audio_emotion": "confidence",
+                    "audio_confidence": 0.84,
+                    "dominant_text_emotion": "optimism",
+                    "text_confidence": 0.72,
+                    "weighted_emotion": "confidence",
+                    "weighted_confidence": 0.79,
+                }
+            ],
+        }
+        turn["turn_analysis"] = {
+            "analysis_status": "ready",
+            "summary": "Strong turn.",
+            "momentum_score": 80,
+            "content_quality_score": 78,
+            "emotional_delivery_score": 76,
+            "energy_match_score": 74,
+            "authenticity_score": 79,
+            "follow_up_invitation_score": 72,
+            "strengths": ["Clear response."],
+            "growth_edges": ["Add one more detail."],
+        }
+        turn["analysis_status"] = "ready"
+        self.manager.finish_turn(self.session.session_id, 0)
+        self.manager.store_momentum_decision(
+            self.session.session_id,
+            {
+                "continue_conversation": False,
+                "reason": "The exchange reached a natural stopping point.",
+                "based_on_turn_index": 0,
+            },
+        )
+
+        captured_prompt: dict[str, object] = {}
+
+        async def fake_generate_json(**kwargs):
+            captured_prompt["user_prompt"] = kwargs["user_prompt"]
+            return {
+                "summary": "Strong conversation.",
+                "natural_ending_reason": "The exchange reached a natural stopping point.",
+                "conversation_momentum_score": 80,
+                "content_quality_score": 78,
+                "emotional_delivery_score": 76,
+                "energy_match_score": 74,
+                "authenticity_score": 79,
+                "follow_up_invitation_score": 72,
+                "strengths": ["Clear response.", "Good tone.", "Kept it moving."],
+                "growth_edges": ["Add detail.", "Vary emphasis.", "Invite the next turn."],
+                "next_focus": "Keep the same grounded tone while adding sharper examples.",
+            }
+
+        with patch("backend.sprint.phase_b.graph._generate_json", AsyncMock(side_effect=fake_generate_json)):
+            await generate_final_report(
+                self.manager.get_state(self.session.session_id),
+                {"configurable": {"session_id": self.session.session_id}},
+            )
+
+        user_prompt = str(captured_prompt["user_prompt"])
+        self.assertIn("Per-turn tone and transcript evidence:", user_prompt)
+        evidence_json = user_prompt.split("Per-turn tone and transcript evidence: ", 1)[1].split(
+            "\nAggregated metrics:",
+            1,
+        )[0]
+        evidence = json.loads(evidence_json)
+        self.assertEqual(evidence[0]["analysis_basis"], "audio_and_transcript")
+        self.assertEqual(evidence[0]["dominant_audio_emotion"], "confidence")
+        self.assertEqual(evidence[0]["dominant_text_emotion"], "optimism")
+        self.assertEqual(evidence[0]["chunk_emotions"][0]["weighted_emotion"], "confidence")
 
 
 if __name__ == "__main__":

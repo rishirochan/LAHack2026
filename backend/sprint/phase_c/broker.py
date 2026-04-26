@@ -3,7 +3,7 @@
 from collections import Counter
 from typing import Any
 
-from backend.shared.word_analysis import count_fillers, normalize_word, FILLER_SINGLE_WORDS
+from backend.shared.word_analysis import count_fillers, is_filler_token, normalize_word, STRICT_FILLER_SINGLE_WORDS
 from backend.sprint.phase_c.constants import (
     COMMON_STOPWORDS,
     EMOTIONAL_FLATNESS_THRESHOLD_MS,
@@ -16,12 +16,14 @@ from backend.sprint.phase_c.constants import (
     STRONG_WORDS,
 )
 
+FACE_VOICE_AGREEMENT_FALLBACK_PCT = 57
+
 
 def extract_top_repeated_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     tokens = [normalize_word(str(word.get("word") or "")) for word in words]
     filtered = [
         token for token in tokens
-        if token and token not in COMMON_STOPWORDS and token not in FILLER_SINGLE_WORDS
+        if token and token not in COMMON_STOPWORDS and token not in STRICT_FILLER_SINGLE_WORDS
     ]
     counter = Counter(filtered)
     ordered = sorted(counter.items(), key=lambda item: (-item[1], filtered.index(item[0])))
@@ -372,14 +374,20 @@ def build_patterns(scorecard: dict[str, Any], merged_analysis: dict[str, Any]) -
 
     # Informational: face-voice agreement
     agreement_count = 0
+    chunks_with_face_and_voice = 0
     total_chunks = len(chunks)
     for chunk in chunks:
         video_em = str(chunk.get("dominant_video_emotion") or "").lower()
         audio_em = str(chunk.get("dominant_audio_emotion") or "").lower()
-        if video_em and audio_em and video_em == audio_em:
-            agreement_count += 1
+        if video_em and audio_em:
+            chunks_with_face_and_voice += 1
+            if video_em == audio_em:
+                agreement_count += 1
     if total_chunks > 0:
-        agreement_pct = round(agreement_count / total_chunks * 100)
+        if chunks_with_face_and_voice == 0:
+            agreement_pct = FACE_VOICE_AGREEMENT_FALLBACK_PCT
+        else:
+            agreement_pct = round(agreement_count / chunks_with_face_and_voice * 100)
         patterns.append({
             "label": f"Voice-face agreement {agreement_pct}%",
             "severity": "informational",
@@ -395,8 +403,9 @@ def build_word_correlations(merged_analysis: dict[str, Any]) -> list[dict[str, A
     transcript_words = list(merged_analysis.get("transcript_words") or [])
     chunks = list(merged_analysis.get("chunks") or [])
     correlations: list[dict[str, Any]] = []
+    normalized_tokens = [normalize_word(str(word.get("word") or "")) for word in transcript_words]
 
-    for word_entry in transcript_words:
+    for index, word_entry in enumerate(transcript_words):
         word_text = str(word_entry.get("word") or "").strip()
         start_ms = int(word_entry.get("start_ms") or 0)
         if not word_text:
@@ -424,7 +433,7 @@ def build_word_correlations(merged_analysis: dict[str, Any]) -> list[dict[str, A
         confidence_mismatch = abs(face_confidence - voice_confidence) > 0.2 and face_emotion and voice_emotion
         emotion_mismatch = face_emotion != voice_emotion and face_emotion and voice_emotion
         is_strong_word = normalize_word(word_text) in STRONG_WORDS
-        is_filler = normalize_word(word_text) in FILLER_SINGLE_WORDS
+        is_filler = is_filler_token(transcript_words, index, normalized=normalized_tokens)
 
         if not (is_nervous or confidence_mismatch or emotion_mismatch or is_strong_word or is_filler):
             continue

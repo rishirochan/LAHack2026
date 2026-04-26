@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from backend.shared.db import close_database, get_media_store, get_session_repository, init_database
-from backend.shared.db.repository import DEFAULT_USER_ID
+from backend.shared.db.repository import DEFAULT_USER_ID, _phase_b_summary_overall_score
 from backend.sprint.phase_a.graph import build_initial_state, phase_a_graph
 from backend.sprint.phase_a.schemas import (
     ContinueSessionRequest,
@@ -258,6 +258,7 @@ def _to_session_preview(session: dict) -> dict[str, object]:
             score = round(float(sum(scores) / len(scores)) * 100)
     elif mode == "phase_b":
         label = str(setup.get("scenario") or "Conversation").replace("_", " ").title()
+        score = _phase_b_summary_score(summary)
     elif mode == "phase_c":
         label = "Free Speaking"
         score = summary.get("overall_score") if isinstance(summary, dict) else None
@@ -276,6 +277,10 @@ def _to_session_preview(session: dict) -> dict[str, object]:
         "total_turns": summary.get("total_turns") if isinstance(summary, dict) else None,
         "round_count": len(summary.get("rounds", [])) if isinstance(summary.get("rounds"), list) else None,
     }
+
+
+def _phase_b_summary_score(summary: dict[str, object] | None) -> int | float | None:
+    return _phase_b_summary_overall_score(summary)
 
 
 def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
@@ -389,6 +394,11 @@ def _phase_c_replay_scorecard_from_summary(summary: dict[str, object]) -> dict[s
         "improvement_areas": summary.get("improvement_areas") or [],
     }
 def _to_replay_session(session: dict) -> dict[str, object]:
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else None
+    replay_summary = dict(summary) if isinstance(summary, dict) else None
+    if isinstance(replay_summary, dict) and session.get("mode") == "phase_b" and replay_summary.get("overall_score") is None:
+        replay_summary["overall_score"] = _phase_b_summary_score(replay_summary)
+
     return {
         "session_id": session.get("session_id"),
         "user_id": session.get("user_id"),
@@ -400,7 +410,7 @@ def _to_replay_session(session: dict) -> dict[str, object]:
         "completed_at": session.get("completed_at"),
         "setup": session.get("setup") if isinstance(session.get("setup"), dict) else {},
         "rounds": session.get("rounds") if isinstance(session.get("rounds"), list) else [],
-        "summary": session.get("summary") if isinstance(session.get("summary"), dict) else None,
+        "summary": replay_summary,
         "media_refs": session.get("media_refs") if isinstance(session.get("media_refs"), list) else [],
         "phase_c_recording": _to_phase_c_replay_recording(session),
     }

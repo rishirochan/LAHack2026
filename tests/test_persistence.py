@@ -137,6 +137,19 @@ class PersistenceRepositoryTests(unittest.TestCase):
     def test_in_memory_repository_normalizes_phase_b_chunks_and_trends(self) -> None:
         state = build_initial_state("phase-b-chunks", "interview", 4)
         state["status"] = "complete"
+        state["final_report"] = {
+            "summary": "Strong conversational baseline.",
+            "natural_ending_reason": "The exchange ended naturally.",
+            "conversation_momentum_score": 84,
+            "content_quality_score": 78,
+            "emotional_delivery_score": 72,
+            "energy_match_score": 70,
+            "authenticity_score": 88,
+            "follow_up_invitation_score": 74,
+            "strengths": ["Clear answer."],
+            "growth_edges": ["Invite the next turn more clearly."],
+            "next_focus": "Add one sharper follow-up hook.",
+        }
         state["turns"].append(
             {
                 "turn_index": 0,
@@ -235,9 +248,37 @@ class PersistenceRepositoryTests(unittest.TestCase):
         self.assertEqual(len(document["media_refs"]), 3)
         self.assertEqual(document["media_refs"][0]["kind"], "turn_transcript_audio")
         self.assertNotIn("path", document["raw_state"]["turns"][0]["chunks"][0]["video_upload"])
+        self.assertEqual(document["summary"]["overall_score"], 78)
         self.assertEqual(trends["chunk_count"], 1)
         self.assertEqual(trends["average_eye_contact_pct"], 75.0)
         self.assertEqual(trends["dominant_video_emotions"], {"confident": 1})
+        self.assertEqual(trends["score_history"][0]["score"], 78)
+
+    def test_in_memory_repository_backfills_phase_b_overall_scores(self) -> None:
+        state = build_initial_state("phase-b-legacy", "interview", 4)
+        state["status"] = "complete"
+        state["final_report"] = {
+            "summary": "Solid conversation.",
+            "natural_ending_reason": "The conversation landed naturally.",
+            "conversation_momentum_score": 80,
+            "content_quality_score": 76,
+            "emotional_delivery_score": 74,
+            "energy_match_score": 68,
+            "authenticity_score": 86,
+            "follow_up_invitation_score": 72,
+            "strengths": ["Stayed engaged."],
+            "growth_edges": ["Add more specificity."],
+            "next_focus": "Bring one memorable detail into each answer.",
+        }
+
+        asyncio.run(self.repository.create_phase_b_session(session_id="phase-b-legacy", state=state))
+        self.repository._documents["phase-b-legacy"]["summary"].pop("overall_score", None)
+
+        result = asyncio.run(self.repository.backfill_phase_b_overall_scores(user_id=None))
+        document = asyncio.run(self.repository.get_session("phase-b-legacy"))
+
+        self.assertEqual(result, {"scanned": 1, "updated": 1, "skipped": 0})
+        self.assertEqual(document["summary"]["overall_score"], 76)
 
     def test_mongo_repository_preserves_existing_phase_b_user_id_on_update(self) -> None:
         async def scenario() -> None:
@@ -408,6 +449,89 @@ class PersistenceApiTests(unittest.TestCase):
         self.assertEqual(sessions[0]["mode_label"], "Emotion Drills")
         self.assertEqual(sessions[0]["score"], 90)
         self.assertEqual(sessions[0]["label"], "Surprise")
+
+    def test_recent_sessions_endpoint_returns_phase_b_overall_score(self) -> None:
+        state = build_initial_state("recent-b", "interview", 4)
+        state["status"] = "complete"
+        state["final_report"] = {
+            "summary": "Solid conversation.",
+            "natural_ending_reason": "The conversation landed naturally.",
+            "conversation_momentum_score": 80,
+            "content_quality_score": 76,
+            "emotional_delivery_score": 74,
+            "energy_match_score": 68,
+            "authenticity_score": 86,
+            "follow_up_invitation_score": 72,
+            "strengths": ["Stayed engaged."],
+            "growth_edges": ["Add more specificity."],
+            "next_focus": "Bring one memorable detail into each answer.",
+        }
+        state["turns"].append(
+            {
+                "turn_index": 0,
+                "prompt_text": "Tell me about yourself.",
+                "recording_start_ms": 0,
+                "recording_end_ms": 5000,
+                "chunks": [],
+                "transcript": "I love building useful products.",
+                "transcript_words": [],
+                "merged_summary": {},
+                "critique": "Grounded and concise.",
+            }
+        )
+
+        asyncio.run(self.repository.create_phase_b_session(session_id="recent-b", state=state))
+
+        response = self.client.get("/api/sessions/recent")
+
+        self.assertEqual(response.status_code, 200)
+        sessions = response.json()["sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["session_id"], "recent-b")
+        self.assertEqual(sessions[0]["score"], 76)
+        self.assertEqual(sessions[0]["mode"], "phase_b")
+
+    def test_recent_sessions_endpoint_backfills_phase_b_overall_score_from_final_report(self) -> None:
+        state = build_initial_state("legacy-b", "interview", 4)
+        state["status"] = "complete"
+        state["final_report"] = {
+            "summary": "Solid conversation.",
+            "natural_ending_reason": "The conversation landed naturally.",
+            "conversation_momentum_score": 80,
+            "content_quality_score": 76,
+            "emotional_delivery_score": 74,
+            "energy_match_score": 68,
+            "authenticity_score": 86,
+            "follow_up_invitation_score": 72,
+            "strengths": ["Stayed engaged."],
+            "growth_edges": ["Add more specificity."],
+            "next_focus": "Bring one memorable detail into each answer.",
+        }
+        state["turns"].append(
+            {
+                "turn_index": 0,
+                "prompt_text": "Tell me about yourself.",
+                "recording_start_ms": 0,
+                "recording_end_ms": 5000,
+                "chunks": [],
+                "transcript": "I love building useful products.",
+                "transcript_words": [],
+                "merged_summary": {},
+                "critique": "Grounded and concise.",
+            }
+        )
+
+        asyncio.run(self.repository.create_phase_b_session(session_id="legacy-b", state=state))
+        self.repository._documents["legacy-b"]["summary"].pop("overall_score", None)
+
+        recent_response = self.client.get("/api/sessions/recent")
+        replay_response = self.client.get("/api/sessions/legacy-b/replay")
+
+        self.assertEqual(recent_response.status_code, 200)
+        recent_sessions = recent_response.json()["sessions"]
+        self.assertEqual(recent_sessions[0]["score"], 76)
+        self.assertEqual(replay_response.status_code, 200)
+        self.assertEqual(replay_response.json()["summary"]["overall_score"], 76)
 
     def test_session_detail_endpoint_returns_document(self) -> None:
         asyncio.run(

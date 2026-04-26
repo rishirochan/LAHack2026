@@ -3,7 +3,6 @@
 import json
 import logging
 
-from ...shared.ai.providers.google_genai import create_gemma_client, extract_text
 from ...shared.ai.settings import AISettings
 
 
@@ -68,6 +67,8 @@ async def _generate_text(*, settings: AISettings, prompt: str) -> str:
 
     if not settings.google_api_key:
         raise RuntimeError("GOOGLE_API_KEY is not configured for Gemma requests.")
+
+    from ...shared.ai.providers.google_genai import create_gemma_client, extract_text
 
     client = create_gemma_client(settings)
     try:

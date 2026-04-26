@@ -7,12 +7,17 @@ import { BookOpenText, X } from 'lucide-react';
 import type { TranscriptWord } from '@/lib/phase-c-api';
 
 /** Filler words that should be colored amber. */
-const FILLER_WORDS = new Set([
-  'um', 'uh', 'like', 'basically', 'literally',
+const STRICT_FILLER_WORDS = new Set([
+  'um', 'uh',
+]);
+
+const CONTEXTUAL_FILLER_WORDS = new Set([
+  'like', 'so', 'actually', 'basically', 'literally',
 ]);
 
 /** Multi-word fillers checked by scanning consecutive tokens. */
 const FILLER_PHRASES = ['you know', 'i would say', 'sort of'];
+const PAUSE_FILLER_THRESHOLD_MS = 250;
 
 /** Strong words that should be colored green. */
 const STRONG_WORDS = new Set([
@@ -49,10 +54,59 @@ function normalize(word: string) {
   return word.trim().toLowerCase().replace(/[.,!?;:"'()[\]{}]/g, '');
 }
 
+function pauseBeforeMs(words: TranscriptWord[], index: number) {
+  if (index <= 0) {
+    return 0;
+  }
+  return Math.max(0, words[index].start_ms - words[index - 1].end_ms);
+}
+
+function pauseAfterMs(words: TranscriptWord[], index: number) {
+  if (index + 1 >= words.length) {
+    return 0;
+  }
+  return Math.max(0, words[index + 1].start_ms - words[index].end_ms);
+}
+
+function looksLikeContextualFiller(words: TranscriptWord[], normalizedTokens: string[], index: number) {
+  const token = normalizedTokens[index];
+  const raw = words[index]?.word?.trim() ?? '';
+  const prevRaw = words[index - 1]?.word?.trim() ?? '';
+  const prevPrevRaw = words[index - 2]?.word?.trim() ?? '';
+  const commaNeighbor = [prevPrevRaw, prevRaw, raw].some((value) => value.endsWith(','));
+  const sentenceOpener = index === 0 || /[.!?]$/.test(prevRaw);
+  const sandwichedPause =
+    pauseBeforeMs(words, index) >= PAUSE_FILLER_THRESHOLD_MS &&
+    pauseAfterMs(words, index) >= PAUSE_FILLER_THRESHOLD_MS;
+  const openerPause = sentenceOpener && pauseAfterMs(words, index) >= PAUSE_FILLER_THRESHOLD_MS;
+
+  if (token === 'like') {
+    return commaNeighbor || sandwichedPause;
+  }
+  if (token === 'actually' || token === 'basically' || token === 'literally') {
+    return commaNeighbor || openerPause;
+  }
+  if (token === 'so') {
+    return sentenceOpener && (commaNeighbor || openerPause || sandwichedPause);
+  }
+  return false;
+}
+
+function isFillerToken(words: TranscriptWord[], normalizedTokens: string[], index: number) {
+  const token = normalizedTokens[index];
+  if (STRICT_FILLER_WORDS.has(token)) {
+    return true;
+  }
+  if (CONTEXTUAL_FILLER_WORDS.has(token)) {
+    return looksLikeContextualFiller(words, normalizedTokens, index);
+  }
+  return false;
+}
+
 function getTip(category: ChipCategory, word: string, count: number): string {
   switch (category) {
     case 'filler':
-      return `"${word}" is a filler word — used ${count} time${count !== 1 ? 's' : ''} in this session. Try replacing it with a brief pause to sound more confident.`;
+      return `This use of "${word}" reads as filler-like — used ${count} time${count !== 1 ? 's' : ''} in this session. Try replacing it with a brief pause to sound more confident.`;
     case 'repeated':
       return `"${word}" appeared ${count} times in this session. Consider varying your vocabulary for a more polished delivery.`;
     case 'strong':
@@ -101,7 +155,7 @@ export function WordAudit({ transcriptWords, fillerWordsFound }: WordAuditProps)
     // Count individual word freq (excluding stopwords, fillers — used only for repeat detection)
     const wordFreq = new Map<string, number>();
     for (const token of normalizedTokens) {
-      if (!token || STOPWORDS.has(token) || FILLER_WORDS.has(token)) {
+      if (!token || STOPWORDS.has(token) || STRICT_FILLER_WORDS.has(token)) {
         continue;
       }
       wordFreq.set(token, (wordFreq.get(token) ?? 0) + 1);
@@ -156,7 +210,7 @@ export function WordAudit({ transcriptWords, fillerWordsFound }: WordAuditProps)
       let category: ChipCategory = 'plain';
 
       // Check filler (single-word or part of multi-word)
-      if (FILLER_WORDS.has(norm) || fillerMultiIndices.has(i)) {
+      if (isFillerToken(transcriptWords, normalizedTokens, i) || fillerMultiIndices.has(i)) {
         category = 'filler';
       }
       // Check strong words

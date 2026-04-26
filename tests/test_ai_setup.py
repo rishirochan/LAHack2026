@@ -43,7 +43,7 @@ class AISetupSmokeTests(unittest.TestCase):
         self.assertEqual(settings.elevenlabs_stt_model, "scribe_v1")
 
     @patch("backend.shared.ai.service.create_elevenlabs_client", return_value=object())
-    @patch("backend.shared.ai.service.create_gemma_client", return_value=object())
+    @patch("backend.shared.ai.providers.google_genai.create_gemma_client", return_value=object())
     def test_ai_service_facade_initializes(
         self,
         _mock_gemma,

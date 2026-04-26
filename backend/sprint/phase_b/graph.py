@@ -330,6 +330,7 @@ async def generate_final_report(state: PhaseBState, config: RunnableConfig) -> d
         (session_state.get("momentum_decision") or {}).get("reason")
         or "The session was ended manually."
     )
+    emotion_evidence = _build_final_report_emotion_evidence(session_state)
     aggregated_metrics = _aggregate_final_metrics(session_state)
     fallback = _fallback_final_report(aggregated_metrics, natural_ending_reason)
 
@@ -341,6 +342,7 @@ async def generate_final_report(state: PhaseBState, config: RunnableConfig) -> d
                 starter_topic=session_state.get("starter_topic"),
                 conversation_history=session_state["conversation_history"],
                 turn_analyses=[analysis for analysis in turn_analyses if isinstance(analysis, dict)],
+                emotion_evidence_json=json.dumps(emotion_evidence, ensure_ascii=True),
                 aggregated_metrics_json=json.dumps(aggregated_metrics, ensure_ascii=True),
                 natural_ending_reason=natural_ending_reason,
             ),
@@ -682,6 +684,48 @@ def _aggregate_final_metrics(state: PhaseBState) -> dict[str, Any]:
         "analysis_basis": "audio_and_transcript",
         "chunk_status_counts": dict(Counter(str(chunk.get("status") or "unknown") for chunk in all_chunks)),
     }
+
+
+def _build_final_report_emotion_evidence(state: PhaseBState) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for turn in state["turns"]:
+        if not isinstance(turn, dict):
+            continue
+        merged = turn.get("merged_summary") if isinstance(turn.get("merged_summary"), dict) else {}
+        overall = merged.get("overall") if isinstance(merged.get("overall"), dict) else {}
+        chunks = merged.get("chunks") if isinstance(merged.get("chunks"), list) else []
+        evidence.append(
+            {
+                "turn_index": int(turn.get("turn_index") or 0),
+                "analysis_status": turn.get("analysis_status"),
+                "question_asked": str(turn.get("prompt_text") or ""),
+                "analysis_basis": merged.get("analysis_basis") or overall.get("analysis_basis"),
+                "dominant_audio_emotion": overall.get("dominant_audio_emotion"),
+                "audio_confidence": overall.get("audio_confidence"),
+                "dominant_text_emotion": overall.get("dominant_text_emotion"),
+                "text_confidence": overall.get("text_confidence"),
+                "weighted_dominant_emotion": overall.get("weighted_dominant_emotion"),
+                "weighted_confidence": overall.get("weighted_confidence"),
+                "imentiv_status": overall.get("imentiv_status"),
+                "analysis_ready": overall.get("analysis_ready"),
+                "chunk_emotions": [
+                    {
+                        "t_start": chunk.get("t_start"),
+                        "t_end": chunk.get("t_end"),
+                        "status": chunk.get("status"),
+                        "dominant_audio_emotion": chunk.get("dominant_audio_emotion"),
+                        "audio_confidence": chunk.get("audio_confidence"),
+                        "dominant_text_emotion": chunk.get("dominant_text_emotion"),
+                        "text_confidence": chunk.get("text_confidence"),
+                        "weighted_emotion": chunk.get("weighted_emotion"),
+                        "weighted_confidence": chunk.get("weighted_confidence"),
+                    }
+                    for chunk in chunks
+                    if isinstance(chunk, dict)
+                ],
+            }
+        )
+    return evidence
 
 
 def _fallback_final_report(metrics: dict[str, Any], natural_ending_reason: str) -> dict[str, Any]:
