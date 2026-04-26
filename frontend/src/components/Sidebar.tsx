@@ -1,5 +1,6 @@
- 'use client';
+'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/auth/AuthProvider';
@@ -31,12 +32,44 @@ const practiceItems = [
   { icon: Mic, label: 'Free Speaking', path: '/free' },
 ];
 
+const SIDEBAR_EXPAND_DURATION_MS = 300;
+
+function SidebarSectionDivider({
+  label,
+  showLabel,
+  motionClassName,
+}: {
+  label: string;
+  showLabel: boolean;
+  motionClassName: string;
+}) {
+  if (!showLabel) {
+    return (
+      <div className="mx-3 my-3 flex min-h-[20px] items-center">
+        <div className="h-px w-full bg-cream-300" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-3 my-3 flex min-h-[20px] items-center gap-3">
+      <div className="h-px flex-1 bg-cream-300" />
+      <p className={`shrink-0 px-1 text-[10px] uppercase tracking-widest text-slate-400 ${motionClassName}`}>
+        {label}
+      </p>
+      <div className="h-px flex-1 bg-cream-300" />
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const { expanded, toggleSidebar } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
   const { logout } = useAuth();
   const { recentSessions, loading, error } = useSessionsContext();
+  const [showExpandedContent, setShowExpandedContent] = useState(expanded);
+  const expandTimeoutRef = useRef<number | null>(null);
 
   const isActive = (path: string) => pathname === path;
 
@@ -45,6 +78,32 @@ export default function Sidebar() {
   const navItemActive = 'bg-navy-500 text-white hover:bg-navy-600 hover:text-white';
   const navItemCollapsed = 'justify-center px-0 py-2.5';
   const navItemExpanded = 'gap-3 px-3 py-2.5';
+  const expandedContentMotion = 'animate-in fade-in-0 slide-in-from-left-1 duration-200 ease-out';
+
+  useEffect(() => () => {
+    if (expandTimeoutRef.current !== null) {
+      window.clearTimeout(expandTimeoutRef.current);
+    }
+  }, []);
+
+  const handleToggleSidebar = () => {
+    if (expandTimeoutRef.current !== null) {
+      window.clearTimeout(expandTimeoutRef.current);
+      expandTimeoutRef.current = null;
+    }
+
+    if (expanded) {
+      setShowExpandedContent(false);
+      toggleSidebar();
+      return;
+    }
+
+    toggleSidebar();
+    expandTimeoutRef.current = window.setTimeout(() => {
+      setShowExpandedContent(true);
+      expandTimeoutRef.current = null;
+    }, SIDEBAR_EXPAND_DURATION_MS);
+  };
 
   return (
     <aside
@@ -60,8 +119,8 @@ export default function Sidebar() {
         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold shrink-0 ${pathname === '/profile' ? 'bg-white text-navy-500' : 'bg-navy-500 text-white'}`}>
           JD
         </div>
-        {expanded && (
-          <div className="transition-opacity duration-300">
+        {showExpandedContent && (
+          <div className={expandedContentMotion}>
             <p className={`text-sm font-medium ${pathname === '/profile' ? 'text-white' : 'text-slate-900'}`}>Jordan D.</p>
             <p className={`text-xs ${pathname === '/profile' ? 'text-navy-200' : 'text-slate-500'}`}>View profile</p>
           </div>
@@ -79,20 +138,18 @@ export default function Sidebar() {
             }`}
           >
             <item.icon size={18} />
-            {expanded && <span className="text-sm">{item.label}</span>}
+            {showExpandedContent && <span className={`text-sm ${expandedContentMotion}`}>{item.label}</span>}
           </Link>
         ))}
       </nav>
 
-      {/* Divider */}
-      <div className="border-t border-cream-300 mx-3 my-3" />
+      <SidebarSectionDivider
+        label="Practice"
+        showLabel={showExpandedContent}
+        motionClassName={expandedContentMotion}
+      />
 
       {/* Practice Section */}
-      {expanded && (
-        <p className="text-[10px] uppercase tracking-widest text-slate-400 px-5 mb-2">
-          Practice
-        </p>
-      )}
       <nav className="flex flex-col gap-1">
         {practiceItems.map((item) => (
           <Link
@@ -103,22 +160,20 @@ export default function Sidebar() {
             }`}
           >
             <item.icon size={18} />
-            {expanded && <span className="text-sm">{item.label}</span>}
+            {showExpandedContent && <span className={`text-sm ${expandedContentMotion}`}>{item.label}</span>}
           </Link>
         ))}
       </nav>
 
-      {/* Divider */}
-      <div className="border-t border-cream-300 mx-3 my-3" />
+      <SidebarSectionDivider
+        label="Recents"
+        showLabel={showExpandedContent}
+        motionClassName={expandedContentMotion}
+      />
 
       {/* Recents */}
-      {expanded && (
-        <p className="text-[10px] uppercase tracking-widest text-slate-400 px-5 mb-2">
-          Recents
-        </p>
-      )}
-      {expanded && (
-        <div className="flex flex-col gap-1">
+      {showExpandedContent && (
+        <div className={`flex flex-col gap-1 ${expandedContentMotion}`}>
           {loading && (
             <div className="flex items-center gap-3 px-5 py-2 text-xs text-slate-500">
               <Loader2 size={14} className="animate-spin" />
@@ -168,12 +223,12 @@ export default function Sidebar() {
         className={`${navItemBase} ${expanded ? navItemExpanded : navItemCollapsed} mb-2`}
       >
         <LogOut size={18} />
-        {expanded && <span className="text-sm">Log out</span>}
+        {showExpandedContent && <span className={`text-sm ${expandedContentMotion}`}>Log out</span>}
       </button>
 
       {/* Collapse Toggle */}
       <button
-        onClick={toggleSidebar}
+        onClick={handleToggleSidebar}
         className="flex items-center justify-center gap-2 w-full py-3 border-t border-cream-300 text-slate-500 hover:text-slate-900 transition-colors"
       >
         {expanded ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}

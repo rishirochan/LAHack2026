@@ -9,13 +9,14 @@ from langgraph.graph import END, StateGraph
 
 from backend.shared.ai import get_ai_service, get_settings
 from backend.shared.db import get_session_repository
-from .elevenlabs import synthesize_tts_audio, transcribe_audio as transcribe_elevenlabs
+from backend.shared.db.tasks import schedule_repository_write
+from backend.shared.word_analysis import count_fillers
+from .elevenlabs import transcribe_audio as transcribe_elevenlabs
 from .gemma import generate_coach_critique, generate_scenario_prompt
 from .imentiv import analyze_video
 from .session_manager import get_session_manager
 
 
-FILLER_WORDS = {"um", "uh", "like", "you know", "basically", "literally", "so", "right"}
 MATCH_WINDOW_MS = 1000
 TOP_MOMENTS_LIMIT = 3
 logger = logging.getLogger(__name__)
@@ -90,15 +91,6 @@ async def generate_scenario(state: PhaseAState, config: RunnableConfig) -> dict[
         return {"error": f"Could not generate a scenario: {error}"}
 
 
-async def speak_scenario(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
-    try:
-        await _stream_tts(config, "scenario", state["scenario_prompt"] or "")
-        return {}
-    except Exception as error:
-        logger.exception("Failed to stream Phase A scenario TTS.")
-        return {"error": f"Could not speak the scenario: {error}"}
-
-
 async def await_recording(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
     try:
         await _send_event(config, "recording_ready", {"max_seconds": 20})
@@ -156,6 +148,11 @@ async def poll_imentiv_results(state: PhaseAState, config: RunnableConfig) -> di
         word_timestamps: list[dict[str, Any]] = []
         if isinstance(transcript_result, tuple):
             transcript, word_timestamps = transcript_result
+        else:
+            logger.warning("Transcription returned non-tuple result (likely failed silently): %s", type(transcript_result))
+
+        if not word_timestamps:
+            logger.warning("No word timestamps returned from transcription.")
 
         return {
             "transcript": transcript,
@@ -200,6 +197,8 @@ async def generate_critique(state: PhaseAState, config: RunnableConfig) -> dict[
             merged_analysis=state["merged_analysis"],
             previous_critiques=state["previous_critiques"],
         )
+        round_state = {**state, "critique": critique}
+        get_session_manager().add_round(_session_id(config), round_state)
         await _send_event(
             config,
             "round_result",
@@ -208,6 +207,7 @@ async def generate_critique(state: PhaseAState, config: RunnableConfig) -> dict[
                 "match_score": state["match_score"],
                 "filler_words_found": state["merged_analysis"].get("filler_words_found", []),
                 "filler_word_count": state["merged_analysis"].get("filler_word_count", 0),
+                "filler_word_breakdown": state["merged_analysis"].get("filler_word_breakdown", {}),
                 "derived_metrics": state["merged_analysis"].get("derived_metrics", {}),
                 "display_metrics": state["merged_analysis"].get("display_metrics", []),
             },
@@ -217,33 +217,27 @@ async def generate_critique(state: PhaseAState, config: RunnableConfig) -> dict[
         logger.exception("Failed to generate Phase A critique.")
         return {"error": f"Could not generate critique: {error}"}
 
-
-async def speak_critique(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
-    try:
-        await _send_event(config, "processing_stage", {"stage": "Preparing playback"})
-        await _stream_tts(config, "critique", state["critique"] or "")
-        previous_critiques = [*state["previous_critiques"], state["critique"] or ""]
-        get_session_manager().add_round(_session_id(config), {**state, "previous_critiques": previous_critiques})
-        return {"previous_critiques": previous_critiques, "error": None}
-    except Exception as error:
-        logger.exception("Failed to stream Phase A critique TTS.")
-        return {"error": f"Could not speak critique: {error}"}
-
-
 async def check_continue(state: PhaseAState, config: RunnableConfig) -> dict[str, Any]:
     try:
         continue_session = await get_session_manager().wait_for_continue(_session_id(config))
+        previous_critiques = [*state["previous_critiques"]]
+        if state.get("critique"):
+            previous_critiques.append(state["critique"] or "")
         if not continue_session:
             session_id = _session_id(config)
             summary = get_session_manager().get_summary(session_id).model_dump()
-            await get_session_repository().update_phase_a_session(
-                session_id=session_id,
-                summary=summary,
-                raw_state=state,
-                status="complete",
+            schedule_repository_write(
+                get_session_repository().update_phase_a_session(
+                    session_id=session_id,
+                    summary=summary,
+                    raw_state={**state, "previous_critiques": previous_critiques},
+                    status="complete",
+                ),
+                key=session_id,
             )
             await _send_event(config, "session_summary", summary)
         return {
+            "previous_critiques": previous_critiques,
             "continue_session": continue_session,
             "video_path": None,
             "audio_path": None,
@@ -283,7 +277,8 @@ def build_merged_analysis(state: PhaseAState) -> tuple[dict[str, Any], list[dict
         if (correlation := _build_word_correlation(word, video_emotions, audio_emotions)) is not None
     ]
     peak_match_score = _calculate_peak_match_score(video_emotions, state["target_emotion"])
-    filler_words_found = _find_filler_words(state["word_timestamps"])
+    filler_word_count, filler_word_breakdown = count_fillers(state["word_timestamps"])
+    filler_words_found = [w for w, n in filler_word_breakdown.items() for _ in range(n)]
     missing_streams = {
         "video": len(video_emotions) == 0,
         "audio": len(audio_emotions) == 0,
@@ -324,7 +319,8 @@ def build_merged_analysis(state: PhaseAState) -> tuple[dict[str, Any], list[dict
         "scenario_prompt": state["scenario_prompt"],
         "transcript": state["transcript"],
         "filler_words_found": filler_words_found,
-        "filler_word_count": len(filler_words_found),
+        "filler_word_count": filler_word_count,
+        "filler_word_breakdown": filler_word_breakdown,
         "video_emotion_timeline": video_emotions,
         "audio_emotion_timeline": audio_emotions,
         "imentiv_summary": state.get("imentiv_analysis", {}).get("summary"),
@@ -474,24 +470,17 @@ def compile_phase_a_graph():
 
     graph = StateGraph(PhaseAState)
     graph.add_node("generate_scenario", generate_scenario)
-    graph.add_node("speak_scenario", speak_scenario)
     graph.add_node("await_recording", await_recording)
     graph.add_node("upload_to_imentiv", upload_to_imentiv)
     graph.add_node("poll_imentiv_results", poll_imentiv_results)
     graph.add_node("merge_and_correlate", merge_and_correlate)
     graph.add_node("generate_critique", generate_critique)
-    graph.add_node("speak_critique", speak_critique)
     graph.add_node("check_continue", check_continue)
     graph.add_node("handle_error", handle_error)
 
     graph.set_entry_point("generate_scenario")
     graph.add_conditional_edges(
         "generate_scenario",
-        _route_error,
-        {"error": "handle_error", "ok": "speak_scenario"},
-    )
-    graph.add_conditional_edges(
-        "speak_scenario",
         _route_error,
         {"error": "handle_error", "ok": "await_recording"},
     )
@@ -514,11 +503,6 @@ def compile_phase_a_graph():
     graph.add_conditional_edges(
         "generate_critique",
         _route_error,
-        {"error": "handle_error", "ok": "speak_critique"},
-    )
-    graph.add_conditional_edges(
-        "speak_critique",
-        _route_error,
         {"error": "handle_error", "ok": "check_continue"},
     )
     graph.add_conditional_edges(
@@ -529,26 +513,17 @@ def compile_phase_a_graph():
     graph.add_edge("handle_error", END)
     return graph.compile()
 
-
-async def _stream_tts(config: RunnableConfig, audio_type: str, text: str) -> None:
-    await _send_event(config, "tts_start", {"audio_type": audio_type, "text": text})
-    audio = await synthesize_tts_audio(ai_service=get_ai_service(), text=text)
-    await _send_event(
-        config,
-        "audio_blob",
-        {"audio_type": audio_type, "audio": audio, "mime_type": "audio/mpeg"},
-    )
-    await _send_event(config, "tts_end", {"audio_type": audio_type})
-
-
 async def _soft_result(awaitable):
     try:
         return await awaitable
     except TimeoutError:
+        logger.warning("Soft-result task timed out (TimeoutError).")
         return []
     except asyncio.TimeoutError:
+        logger.warning("Soft-result task timed out (asyncio.TimeoutError).")
         return []
     except Exception:
+        logger.exception("Soft-result task failed.")
         return []
 
 
@@ -813,17 +788,6 @@ def _format_percentage(value: Any) -> str:
     return f"{round(float(value or 0) * 100)}%"
 
 
-def _find_filler_words(word_timestamps: list[dict[str, Any]]) -> list[str]:
-    words = [str(word.get("word") or "").strip().lower().strip(".,!?;:") for word in word_timestamps]
-    fillers: list[str] = []
-    for index, word in enumerate(words):
-        if word in FILLER_WORDS:
-            fillers.append(word)
-        if index < len(words) - 1 and f"{word} {words[index + 1]}" in FILLER_WORDS:
-            fillers.append(f"{word} {words[index + 1]}")
-    return fillers
-
-
 async def _send_event(config: RunnableConfig, event_type: str, payload: dict[str, Any]) -> None:
     await get_session_manager().send_event(_session_id(config), event_type, payload)
 
@@ -847,4 +811,3 @@ def _route_continue(state: PhaseAState) -> str:
 
 
 phase_a_graph = compile_phase_a_graph()
-

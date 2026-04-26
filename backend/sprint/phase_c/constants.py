@@ -19,7 +19,6 @@ STRONG_WORDS = {
     "delivered", "drove", "improved", "launched", "built",
     "executed", "resolved", "optimized", "exceeded", "transformed",
 }
-
 PACE_WPM_MIN = 120
 PACE_WPM_MAX = 170
 PACE_STABLE_DELTA = 10

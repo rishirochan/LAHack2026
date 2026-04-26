@@ -153,22 +153,25 @@ export default function SettingsPage() {
               }}
               disabled={isLoadingVoices}
             >
-              <SelectTrigger id="voice-select" className="mt-3 h-12 w-full rounded-2xl border-cream-300 px-4">
+              <SelectTrigger
+                id="voice-select"
+                className="mt-3 h-12 w-full rounded-2xl border-cream-300 px-4 text-center [&_[data-slot=select-value]]:w-full [&_[data-slot=select-value]]:justify-center"
+              >
                 <SelectValue placeholder={isLoadingVoices ? 'Loading voices...' : 'Select a voice'} />
               </SelectTrigger>
               <SelectContent
                 position="popper"
-                align="start"
-                className="z-[80] max-h-80 min-w-[var(--radix-select-trigger-width)] w-[var(--radix-select-trigger-width)] border-cream-300 bg-white shadow-2xl"
+                align="center"
+                className="z-[80] max-h-80 min-w-[var(--radix-select-trigger-width)] w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[24px] border-cream-300 bg-white shadow-2xl [&_[data-slot=select-scroll-up-button]]:hidden [&_[data-slot=select-scroll-down-button]]:hidden [&_[data-slot=select-viewport]]:overflow-x-hidden [&_[data-slot=select-viewport]]:p-2"
               >
                 {orderedVoices.map((voice) => (
                   <SelectItem
                     key={voice.voiceId}
                     value={voice.voiceId}
-                    className="bg-white data-[state=checked]:bg-navy-50 data-[state=checked]:text-slate-900 focus:bg-cream-100 [&>[data-slot=select-item-indicator]]:hidden"
+                    className="justify-center rounded-2xl bg-white px-4 py-3 text-center data-[state=checked]:bg-navy-50 data-[state=checked]:text-slate-900 focus:bg-cream-100 [&>[data-slot=select-item-indicator]]:hidden"
                   >
                     <span
-                      className="inline-flex max-w-full items-center gap-1.5"
+                      className="inline-flex max-w-full items-center justify-center gap-1.5 text-center"
                       title={voice.displayName}
                     >
                       <span className="truncate">{voice.displayName}</span>

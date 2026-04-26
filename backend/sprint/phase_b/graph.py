@@ -37,22 +37,11 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
 
     try:
         if not session_state.get("peer_profile"):
-            setup_fallback = {
-                "scenario": session_state.get("scenario_preference") or "casual",
-                "peer_profile": {
-                    "name": "Jordan",
-                    "role": "new classmate",
-                    "vibe": "friendly but observant",
-                    "energy": "medium",
-                    "conversation_goal": "get to know the user and see whether the conversation keeps flowing",
-                    "scenario": session_state.get("scenario_preference") or "casual",
-                },
-                "starter_topic": "how the week has been going and what has felt energizing lately",
-                "opening_line": "Hey, I am Jordan. What has been the most interesting part of your week so far?",
-            }
+            setup_fallback = _build_setup_fallback(session_state)
             setup = await _generate_json(
                 system_prompt=SETUP_SYSTEM_PROMPT,
                 user_prompt=build_setup_user(
+                    practice_prompt=session_state.get("practice_prompt"),
                     scenario_preference=session_state.get("scenario_preference"),
                 ),
                 fallback=setup_fallback,
@@ -74,6 +63,7 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
                 config,
                 "session_initialized",
                 {
+                    "practice_prompt": session_state.get("practice_prompt"),
                     "scenario": scenario,
                     "peer_profile": peer_profile,
                     "starter_topic": starter_topic,
@@ -111,7 +101,7 @@ async def generate_peer_turn(state: PhaseBState, config: RunnableConfig) -> dict
 
 
 async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str, Any]:
-    """Assemble per-turn chunk and transcript context without blocking on pending analysis."""
+    """Assemble per-turn transcript, tone, and text-emotion context."""
 
     session_id = _session_id(config)
     manager = get_phase_b_manager()
@@ -125,6 +115,10 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
 
     words = current_turn.get("transcript_words") or []
     chunks = current_turn["chunks"]
+    imentiv_analysis = current_turn.get("imentiv_analysis") or {}
+    transcript_segments = _transcript_segments(imentiv_analysis)
+    overall_audio = _dominant_emotion(imentiv_analysis.get("audio_emotions") or [])
+    overall_text = _dominant_emotion(imentiv_analysis.get("text_emotions") or [])
 
     chunk_summaries: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -136,11 +130,9 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
             if word.get("start", 0) * 1000 >= t_start and word.get("start", 0) * 1000 < t_end
         ]
         segment_text = " ".join(str(word.get("word") or "") for word in segment_words).strip()
-        video_ems = chunk.get("video_emotions") or []
-        audio_ems = chunk.get("audio_emotions") or []
-        dominant_video = _dominant_emotion(video_ems)
-        dominant_audio = _dominant_emotion(audio_ems)
-        mp = chunk.get("mediapipe_metrics") or {}
+        segment_emotions = _segment_text_emotions(transcript_segments, t_start, t_end)
+        dominant_text = _dominant_emotion(segment_emotions)
+        weighted = _weighted_emotion(overall_audio, dominant_text or overall_text)
 
         chunk_summaries.append(
             {
@@ -148,21 +140,27 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
                 "t_end": t_end,
                 "status": chunk["status"],
                 "transcript_segment": segment_text,
-                "dominant_video_emotion": dominant_video.get("emotion_type") if dominant_video else None,
-                "video_confidence": dominant_video.get("confidence") if dominant_video else None,
-                "dominant_audio_emotion": dominant_audio.get("emotion_type") if dominant_audio else None,
-                "audio_confidence": dominant_audio.get("confidence") if dominant_audio else None,
-                "eye_contact_pct": mp.get("avg_eye_contact_score", 0) * 100 if mp else 0,
+                "dominant_video_emotion": None,
+                "video_confidence": None,
+                "dominant_audio_emotion": overall_audio.get("emotion_type") if overall_audio else None,
+                "audio_confidence": overall_audio.get("confidence") if overall_audio else None,
+                "dominant_text_emotion": dominant_text.get("emotion_type") if dominant_text else None,
+                "text_confidence": dominant_text.get("confidence") if dominant_text else None,
+                "weighted_emotion": weighted.get("emotion_type") if weighted else None,
+                "weighted_confidence": weighted.get("confidence") if weighted else None,
+                "eye_contact_pct": None,
             }
         )
 
-    eye_contacts = [chunk["eye_contact_pct"] for chunk in chunk_summaries if chunk["eye_contact_pct"]]
     status_counts = Counter(chunk["status"] for chunk in chunk_summaries)
+    weighted_overall = _weighted_emotion(overall_audio, overall_text)
     merged = {
         "peer_profile": session_state.get("peer_profile"),
         "starter_topic": session_state.get("starter_topic"),
         "question_asked": current_turn.get("prompt_text", ""),
         "full_transcript": current_turn.get("transcript") or "",
+        "analysis_basis": "audio_and_transcript",
+        "transcript_emotion_segments": transcript_segments,
         "transcript_words": [
             {
                 "word": word["word"],
@@ -173,17 +171,20 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
         ],
         "chunks": chunk_summaries,
         "overall": {
-            "avg_eye_contact_pct": round(sum(eye_contacts) / len(eye_contacts), 1) if eye_contacts else 0,
-            "dominant_video_emotion": _most_common(
-                [chunk["dominant_video_emotion"] for chunk in chunk_summaries]
-            ),
-            "dominant_audio_emotion": _most_common(
-                [chunk["dominant_audio_emotion"] for chunk in chunk_summaries]
-            ),
+            "avg_eye_contact_pct": None,
+            "dominant_video_emotion": None,
+            "dominant_audio_emotion": overall_audio.get("emotion_type") if overall_audio else None,
+            "audio_confidence": overall_audio.get("confidence") if overall_audio else None,
+            "dominant_text_emotion": overall_text.get("emotion_type") if overall_text else None,
+            "text_confidence": overall_text.get("confidence") if overall_text else None,
+            "weighted_dominant_emotion": weighted_overall.get("emotion_type") if weighted_overall else None,
+            "weighted_confidence": weighted_overall.get("confidence") if weighted_overall else None,
+            "analysis_basis": "audio_and_transcript",
+            "imentiv_status": imentiv_analysis.get("status"),
             "status_counts": dict(status_counts),
             "chunks_failed": int(status_counts.get("failed") or 0),
             "chunks_timed_out": int(status_counts.get("timed_out") or 0),
-            "analysis_ready": status_counts.get("pending", 0) == 0 and status_counts.get("processing", 0) == 0,
+            "analysis_ready": bool(imentiv_analysis) and str(imentiv_analysis.get("status") or "").lower() != "failed",
         },
     }
     current_turn["merged_summary"] = merged
@@ -360,18 +361,26 @@ async def handle_error(state: PhaseBState, config: RunnableConfig) -> dict[str, 
 
 
 async def _stream_tts(config: RunnableConfig, audio_type: str, text: str) -> None:
-    state = get_phase_b_manager().get_state(_session_id(config))
+    manager = get_phase_b_manager()
+    session_id = _session_id(config)
+    state = manager.get_state(session_id)
+    if state.get("status") != "active":
+        return
     await _send_event(config, "tts_start", {"audio_type": audio_type, "text": text})
     async for chunk in stream_tts_chunks(
         ai_service=get_ai_service(),
         text=text,
         voice_id=state.get("voice_id"),
     ):
+        if not manager.is_active(session_id):
+            return
         await _send_event(
             config,
             "audio_chunk",
             {"audio_type": audio_type, "chunk": chunk, "mime_type": "audio/mpeg"},
         )
+    if not manager.is_active(session_id):
+        return
     await _send_event(config, "tts_end", {"audio_type": audio_type})
 
 
@@ -454,12 +463,81 @@ def _coerce_peer_profile(value: Any, fallback: dict[str, str]) -> dict[str, str]
     }
 
 
+def _build_setup_fallback(session_state: PhaseBState) -> dict[str, Any]:
+    practice_prompt = str(session_state.get("practice_prompt") or "").strip()
+    scenario = _infer_scenario(
+        practice_prompt=practice_prompt,
+        scenario_preference=session_state.get("scenario_preference"),
+    )
+    role_by_scenario = {
+        "interview": "hiring manager",
+        "negotiation": "counterpart",
+        "networking": "alum contact",
+        "roommate": "roommate",
+        "casual": "conversation partner",
+    }
+    vibe_by_scenario = {
+        "interview": "focused, thoughtful, and a little probing",
+        "negotiation": "calm, strategic, and direct",
+        "networking": "warm, curious, and encouraging",
+        "roommate": "honest, slightly tense, but open to resolving things",
+        "casual": "friendly but observant",
+    }
+    goal_by_scenario = {
+        "interview": "understand whether the user is thoughtful, prepared, and easy to work with",
+        "negotiation": "understand the user's priorities and test how they handle tradeoffs",
+        "networking": "learn what the user wants and decide how helpful to be",
+        "roommate": "clear the air and figure out a better way forward",
+        "casual": "understand the user and keep the exchange flowing naturally",
+    }
+    opening_by_scenario = {
+        "interview": "Thanks for making the time today. To start, can you tell me about yourself and what drew you to this opportunity?",
+        "negotiation": "Thanks for making time. Before we get into details, what outcome are you hoping for here?",
+        "networking": "Glad we could connect. What made this the right conversation for you to have right now?",
+        "roommate": "Can we talk through what's been feeling off lately and what you'd like to change?",
+        "casual": "Let's jump in. What feels most important for us to talk through today?",
+    }
+    starter_topic = (
+        practice_prompt
+        or "the situation the user wants to rehearse and the most important thing they need to communicate"
+    )
+    return {
+        "scenario": scenario,
+        "peer_profile": {
+            "name": "Jordan",
+            "role": role_by_scenario[scenario],
+            "vibe": vibe_by_scenario[scenario],
+            "energy": "medium",
+            "conversation_goal": goal_by_scenario[scenario],
+            "scenario": scenario,
+        },
+        "starter_topic": starter_topic,
+        "opening_line": opening_by_scenario[scenario],
+    }
+
+
+def _infer_scenario(*, practice_prompt: str, scenario_preference: str | None) -> str:
+    if scenario_preference:
+        return str(scenario_preference)
+
+    normalized = practice_prompt.lower()
+    if any(keyword in normalized for keyword in ("interview", "recruiter", "hiring manager", "onsite")):
+        return "interview"
+    if any(keyword in normalized for keyword in ("salary", "offer", "negot", "client", "sales", "contract")):
+        return "negotiation"
+    if any(keyword in normalized for keyword in ("coffee chat", "network", "alum", "mentor", "linkedin")):
+        return "networking"
+    if any(keyword in normalized for keyword in ("roommate", "housemate", "apartment", "rent", "chores")):
+        return "roommate"
+    return "casual"
+
+
 def _fallback_turn_analysis(*, transcript: str, analysis_status: str) -> TurnAnalysis:
     length_bonus = min(len(transcript.split()) * 2, 20)
     base_score = 58 + length_bonus
     return {
         "analysis_status": "ready" if analysis_status == "ready" else "partial",
-        "summary": "You kept the exchange moving, and the next step is making each answer a little more specific.",
+        "summary": "You kept the exchange moving, and the next step is making your tone and wording feel a little more deliberate.",
         "momentum_score": min(base_score, 82),
         "content_quality_score": min(base_score - 4, 80),
         "emotional_delivery_score": 62,
@@ -501,16 +579,16 @@ def _coerce_turn_analysis(value: Any, *, analysis_status: str, fallback: TurnAna
 
 def _aggregate_final_metrics(state: PhaseBState) -> dict[str, Any]:
     turn_analyses = [turn.get("turn_analysis") or {} for turn in state["turns"]]
+    merged_summaries = [
+        turn.get("merged_summary") or {}
+        for turn in state["turns"]
+        if isinstance(turn, dict)
+    ]
     all_chunks = [
         chunk
-        for turn in state["turns"]
-        for chunk in turn.get("chunks") or []
+        for summary in merged_summaries
+        for chunk in (summary.get("chunks") or [])
         if isinstance(chunk, dict)
-    ]
-    eye_contacts = [
-        float((chunk.get("mediapipe_metrics") or {}).get("avg_eye_contact_score", 0)) * 100
-        for chunk in all_chunks
-        if isinstance(chunk.get("mediapipe_metrics"), dict)
     ]
     return {
         "turn_count": len(state["turns"]),
@@ -533,26 +611,31 @@ def _aggregate_final_metrics(state: PhaseBState) -> dict[str, Any]:
         "avg_follow_up_invitation_score": _average(
             [analysis.get("follow_up_invitation_score") for analysis in turn_analyses if isinstance(analysis, dict)]
         ),
-        "avg_eye_contact_pct": _average(eye_contacts),
-        "dominant_video_emotion": _most_common(
-            [
-                (_dominant_emotion(chunk.get("video_emotions") or []) or {}).get("emotion_type")
-                for chunk in all_chunks
-            ]
-        ),
+        "avg_eye_contact_pct": None,
+        "dominant_video_emotion": None,
         "dominant_audio_emotion": _most_common(
-            [
-                (_dominant_emotion(chunk.get("audio_emotions") or []) or {}).get("emotion_type")
-                for chunk in all_chunks
-            ]
+            [(summary.get("overall") or {}).get("dominant_audio_emotion") for summary in merged_summaries]
         ),
+        "dominant_text_emotion": _most_common(
+            [(summary.get("overall") or {}).get("dominant_text_emotion") for summary in merged_summaries]
+        ),
+        "weighted_dominant_emotion": _most_common(
+            [(summary.get("overall") or {}).get("weighted_dominant_emotion") for summary in merged_summaries]
+        ),
+        "avg_audio_confidence": _average(
+            [(summary.get("overall") or {}).get("audio_confidence") for summary in merged_summaries]
+        ),
+        "avg_text_confidence": _average(
+            [(summary.get("overall") or {}).get("text_confidence") for summary in merged_summaries]
+        ),
+        "analysis_basis": "audio_and_transcript",
         "chunk_status_counts": dict(Counter(str(chunk.get("status") or "unknown") for chunk in all_chunks)),
     }
 
 
 def _fallback_final_report(metrics: dict[str, Any], natural_ending_reason: str) -> dict[str, Any]:
     return {
-        "summary": "You kept the conversation alive and gave the peer enough to work with, with room to become more pointed and inviting.",
+        "summary": "You kept the conversation alive and gave the peer enough to work with, with room to make your tone and wording even more intentional.",
         "natural_ending_reason": natural_ending_reason,
         "conversation_momentum_score": _score(metrics.get("avg_momentum_score"), 68),
         "content_quality_score": _score(metrics.get("avg_content_quality_score"), 66),
@@ -563,11 +646,11 @@ def _fallback_final_report(metrics: dict[str, Any], natural_ending_reason: str) 
         "strengths": [
             "You stayed engaged long enough for the exchange to feel real.",
             "Your responses generally sounded conversational instead of memorized.",
-            "There was enough momentum for the peer to keep responding naturally.",
+            "Your wording gave the peer enough to keep responding naturally.",
         ],
         "growth_edges": [
             "Offer one sharper detail in each answer so your ideas land faster.",
-            "Match the peer's energy more deliberately when the topic becomes more animated.",
+            "Let your tone rise and fall a little more so emphasis is easier to hear.",
             "Invite the next turn a little more clearly instead of ending flat.",
         ],
         "next_focus": "Practice answering with one specific detail and one easy follow-up hook.",
@@ -598,6 +681,73 @@ def _coerce_final_report(value: Any, *, fallback: dict[str, Any]) -> dict[str, A
         "growth_edges": _string_list(data.get("growth_edges"), fallback["growth_edges"]),
         "next_focus": str(data.get("next_focus") or fallback["next_focus"]),
     }
+
+
+def _transcript_segments(analysis: Any) -> list[dict[str, Any]]:
+    if not isinstance(analysis, dict):
+        return []
+    segments = analysis.get("transcript_segments")
+    if not isinstance(segments, list):
+        return []
+    return [segment for segment in segments if isinstance(segment, dict)]
+
+
+def _segment_text_emotions(
+    transcript_segments: list[dict[str, Any]],
+    start_ms: int,
+    end_ms: int,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for segment in transcript_segments:
+        seg_start = int(float(segment.get("start") or 0) * 1000)
+        seg_end = int(float(segment.get("end") or 0) * 1000)
+        if seg_end <= start_ms or seg_start >= end_ms:
+            continue
+        raw_emotions = segment.get("raw_emotions")
+        if isinstance(raw_emotions, list):
+            for emotion in raw_emotions:
+                if not isinstance(emotion, dict):
+                    continue
+                label = emotion.get("label") or emotion.get("emotion") or emotion.get("name")
+                if not label:
+                    continue
+                events.append(
+                    {
+                        "emotion_type": str(label),
+                        "confidence": float(emotion.get("score") or emotion.get("confidence") or 0),
+                        "timestamp": seg_start,
+                    }
+                )
+        elif segment.get("emotion"):
+            events.append(
+                {
+                    "emotion_type": str(segment.get("emotion")),
+                    "confidence": 1.0,
+                    "timestamp": seg_start,
+                }
+            )
+    return events
+
+
+def _weighted_emotion(
+    audio_event: dict[str, Any] | None,
+    text_event: dict[str, Any] | None,
+    *,
+    audio_weight: float = 0.6,
+    text_weight: float = 0.4,
+) -> dict[str, Any] | None:
+    totals: dict[str, float] = {}
+    for event, weight in ((audio_event, audio_weight), (text_event, text_weight)):
+        if not isinstance(event, dict):
+            continue
+        label = event.get("emotion_type")
+        if not label:
+            continue
+        totals[str(label)] = totals.get(str(label), 0.0) + float(event.get("confidence") or 0) * weight
+    if not totals:
+        return None
+    label, confidence = max(totals.items(), key=lambda item: item[1])
+    return {"emotion_type": label, "confidence": confidence}
 
 
 def _score(value: Any, fallback: int) -> int:

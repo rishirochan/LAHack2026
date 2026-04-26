@@ -1,12 +1,12 @@
 import unittest
 
+from backend.shared.word_analysis import count_fillers
 from backend.sprint.phase_c.broker import (
     build_scorecard,
     classify_pacing_drift,
     compute_chunk_wpms,
     compute_flatness_flag,
     compute_nervousness_flag,
-    count_fillers,
     extract_top_repeated_phrases,
     extract_top_repeated_words,
 )

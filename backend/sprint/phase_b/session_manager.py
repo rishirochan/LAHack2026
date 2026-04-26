@@ -1,5 +1,6 @@
 """In-memory session coordination for Phase B conversation sessions."""
 
+from asyncio import Task
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -30,6 +31,7 @@ class ActiveConversation:
     state: PhaseBState
     websocket: WebSocket | None = None
     pending_events: list[dict[str, Any]] = field(default_factory=list)
+    next_turn_task: Task[Any] | None = None
 
 
 class PhaseBSessionManager:
@@ -44,11 +46,11 @@ class PhaseBSessionManager:
 
     def create_session(
         self,
-        *,
-        scenario_preference: str | None,
+        scenario_preference: str | None = None,
         max_turns: int = 6,
         minimum_turns: int = 3,
         voice_id: str | None = None,
+        practice_prompt: str | None = None,
     ) -> ActiveConversation:
         session_id = str(uuid4())
         state = build_initial_state(
@@ -57,6 +59,7 @@ class PhaseBSessionManager:
             voice_id=voice_id,
             max_turns=max_turns,
             minimum_turns=minimum_turns,
+            practice_prompt=practice_prompt,
         )
         session = ActiveConversation(session_id=session_id, state=state)
         self._sessions[session_id] = session
@@ -98,8 +101,24 @@ class PhaseBSessionManager:
         state["voice_id"] = voice_id
         self.persist_state(session_id)
 
+    def is_active(self, session_id: str) -> bool:
+        return self.get_state(session_id).get("status") == "active"
+
     def has_active_turn(self, session_id: str) -> bool:
         return self.get_state(session_id).get("current_turn") is not None
+
+    def has_pending_next_turn(self, session_id: str) -> bool:
+        task = self.get_session(session_id).next_turn_task
+        return task is not None and not task.done()
+
+    def set_next_turn_task(self, session_id: str, task: Task[Any]) -> None:
+        self.get_session(session_id).next_turn_task = task
+
+    def clear_next_turn_task(self, session_id: str, task: Task[Any] | None = None) -> None:
+        session = self.get_session(session_id)
+        if task is not None and session.next_turn_task is not task:
+            return
+        session.next_turn_task = None
 
     # ------------------------------------------------------------------
     # Turn management
@@ -109,6 +128,8 @@ class PhaseBSessionManager:
         """Initialize a new turn after prompt generation."""
 
         state = self.get_state(session_id)
+        if state["status"] != "active":
+            raise RuntimeError("Session is not active.")
         turn = build_turn_state(state["turn_index"], prompt_text)
         state["current_turn"] = turn
         state["conversation_history"].append({"role": "assistant", "content": prompt_text})
@@ -159,21 +180,36 @@ class PhaseBSessionManager:
         turn = self.get_turn(session_id, turn_index)
         return sorted(turn["chunks"], key=lambda chunk: (chunk["start_ms"], chunk["chunk_index"]))
 
-    def set_recording_window(self, session_id: str, turn_index: int, start_ms: int, end_ms: int) -> None:
+    def set_recording_window(
+        self,
+        session_id: str,
+        turn_index_or_start_ms: int,
+        start_ms_or_end_ms: int,
+        end_ms: int | None = None,
+    ) -> None:
+        if end_ms is None:
+            turn_index = self._current_turn_index(session_id)
+            start_ms = turn_index_or_start_ms
+            recording_end_ms = start_ms_or_end_ms
+        else:
+            turn_index = turn_index_or_start_ms
+            start_ms = start_ms_or_end_ms
+            recording_end_ms = end_ms
         turn = self.get_turn(session_id, turn_index)
         turn["recording_start_ms"] = start_ms
-        turn["recording_end_ms"] = end_ms
+        turn["recording_end_ms"] = recording_end_ms
         self.persist_state(session_id)
 
     def validate_turn_chunks(
         self,
         session_id: str,
         *,
-        turn_index: int,
+        turn_index: int | None = None,
         min_seconds: int,
         max_seconds: int,
     ) -> tuple[bool, str | None, dict[str, int] | None]:
-        chunks = self.get_sorted_chunks(session_id, turn_index)
+        resolved_turn_index = turn_index if turn_index is not None else self._current_turn_index(session_id)
+        chunks = self.get_sorted_chunks(session_id, resolved_turn_index)
         if not chunks:
             return False, "The recording was empty. Check camera and microphone access.", None
 
@@ -210,6 +246,15 @@ class PhaseBSessionManager:
             "recording_end_ms": recording_end_ms,
         }
 
+    def _current_turn_index(self, session_id: str) -> int:
+        state = self.get_state(session_id)
+        current_turn = state.get("current_turn")
+        if current_turn is not None:
+            return int(current_turn["turn_index"])
+        if state["turns"]:
+            return int(state["turns"][-1]["turn_index"])
+        raise RuntimeError("No turn is available for this session.")
+
     def store_transcript(
         self,
         session_id: str,
@@ -230,6 +275,16 @@ class PhaseBSessionManager:
     ) -> None:
         turn = self.get_turn(session_id, turn_index)
         turn["transcript_audio_upload"] = upload_ref
+        self.persist_state(session_id)
+
+    def store_imentiv_analysis(
+        self,
+        session_id: str,
+        turn_index: int,
+        analysis: dict[str, Any] | None,
+    ) -> None:
+        turn = self.get_turn(session_id, turn_index)
+        turn["imentiv_analysis"] = analysis
         self.persist_state(session_id)
 
     def store_turn_analysis(
@@ -271,11 +326,42 @@ class PhaseBSessionManager:
         state["final_report"] = report
         self.persist_state(session_id)
 
-    def end_session(self, session_id: str) -> PhaseBState:
+    def discard_active_turn(self, session_id: str) -> bool:
         state = self.get_state(session_id)
+        current = state.get("current_turn")
+        if current is None:
+            return False
+
+        prompt_text = str(current.get("prompt_text") or "")
+        state["current_turn"] = None
+        if prompt_text and state["conversation_history"]:
+            last_entry = state["conversation_history"][-1]
+            if last_entry.get("role") == "assistant" and last_entry.get("content") == prompt_text:
+                state["conversation_history"].pop()
+        self.persist_state(session_id)
+        return True
+
+    def begin_session_shutdown(self, session_id: str) -> PhaseBState:
+        state = self.get_state(session_id)
+        self._cancel_next_turn_task(session_id)
+        self.discard_active_turn(session_id)
         state["status"] = "complete"
         self.persist_state(session_id)
         return state
+
+    def end_session(self, session_id: str) -> PhaseBState:
+        state = self.get_state(session_id)
+        self._cancel_next_turn_task(session_id)
+        state["status"] = "complete"
+        self.persist_state(session_id)
+        return state
+
+    def _cancel_next_turn_task(self, session_id: str) -> None:
+        session = self.get_session(session_id)
+        task = session.next_turn_task
+        if task is not None and not task.done():
+            task.cancel()
+        session.next_turn_task = None
 
     def persist_state(self, session_id: str) -> None:
         state = self.get_state(session_id)

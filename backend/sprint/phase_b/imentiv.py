@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from backend.shared.ai.settings import AISettings
 from backend.shared.db import get_media_store
-from backend.shared.imentiv import analyze_video_file, dominant_emotion
+from backend.shared.imentiv import analyze_audio_file, dominant_emotion
 
 
 MOCK_EMOTIONS = [
@@ -18,31 +18,50 @@ MOCK_EMOTIONS = [
 ]
 
 
-async def analyze_video(settings: AISettings, video_source: str | dict[str, Any], *, title: str, description: str) -> dict[str, Any]:
-    """Upload a chunk video, poll Imentiv, and return normalized analysis."""
+async def analyze_audio(
+    settings: AISettings,
+    audio_source: str | dict[str, Any],
+    *,
+    title: str,
+    description: str,
+) -> dict[str, Any]:
+    """Upload chunk audio, poll Imentiv, and return tone + transcript analysis."""
 
     if settings.imentiv_mock:
-        video_emotions = await _mock_emotions()
         audio_emotions = await _mock_emotions()
+        text_emotions = await _mock_emotions()
         return {
-            "video_id": f"mock-video-{uuid4().hex[:8]}",
+            "audio_id": f"mock-audio-{uuid4().hex[:8]}",
             "status": "completed",
-            "summary": "Mock Imentiv analysis.",
-            "dominant_emotion": dominant_emotion(video_emotions + audio_emotions),
+            "summary": "Mock Imentiv audio analysis.",
+            "dominant_emotion": dominant_emotion(audio_emotions + text_emotions),
             "confidence_score": 75.0,
             "clarity_score": 75.0,
             "resilience_score": 75.0,
             "engagement_score": 75.0,
-            "video_emotions": video_emotions,
+            "video_emotions": [],
             "audio_emotions": audio_emotions,
-            "text_emotions": [],
+            "text_emotions": text_emotions,
             "transcript": "",
             "transcript_segments": [],
+            "is_mock": True,
             "raw": {},
         }
 
-    async with _materialized_media_path(video_source) as video_path:
-        return await analyze_video_file(settings, video_path, title=title, description=description)
+    async with _materialized_media_path(audio_source) as audio_path:
+        return await analyze_audio_file(settings, audio_path, title=title, description=description)
+
+
+async def analyze_video(
+    settings: AISettings,
+    video_source: str | dict[str, Any],
+    *,
+    title: str,
+    description: str,
+) -> dict[str, Any]:
+    """Backward-compatible alias while Phase B switches to audio-led analysis."""
+
+    return await analyze_audio(settings, video_source, title=title, description=description)
 
 
 async def _mock_emotions() -> list[dict[str, Any]]:

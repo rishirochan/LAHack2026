@@ -2,8 +2,9 @@
 
 
 SETUP_SYSTEM_PROMPT = """\
-You are creating the setup for a social conversation simulator.
-Generate one realistic peer persona and one starter topic for the user.
+You are creating the setup for a conversation rehearsal simulator.
+The user will give you one short practice brief describing the real conversation they want to emulate.
+Infer the peer, their context, their personality, the likely stakes, and the most natural opening move from that brief.
 Return strict JSON with this exact shape:
 {
   "scenario": "interview | negotiation | casual | networking | roommate",
@@ -20,6 +21,8 @@ Return strict JSON with this exact shape:
 }
 
 Rules:
+- Every setup detail should be derived from the user's practice brief when possible.
+- If the brief mentions a company, event, or relationship, reflect that context in the peer and topic.
 - The peer should feel like one specific person, not a generic role.
 - The opening line should sound natural out loud and invite a response.
 - Keep the opening line under 35 words.
@@ -27,10 +30,12 @@ Rules:
 """
 
 
-def build_setup_user(*, scenario_preference: str | None) -> str:
+def build_setup_user(*, practice_prompt: str | None, scenario_preference: str | None) -> str:
     preference = scenario_preference or "no explicit preference"
+    brief = practice_prompt or "No practice brief was provided. Create a realistic general-purpose setup."
     return (
         "Generate a Phase B conversation setup.\n"
+        f"Practice brief: {brief}\n"
         f"Scenario preference: {preference}.\n"
         "Make the situation socially realistic and worth at least three back-and-forth turns."
     )
@@ -71,7 +76,8 @@ def build_peer_reply_user(
 
 TURN_ANALYSIS_SYSTEM_PROMPT = """\
 You are evaluating one turn in a conversation practice simulator.
-Use the peer's previous line, the user's response transcript, and any available Imentiv data.
+Use the peer's previous line, the user's response transcript, and any available tone-plus-transcript emotion analysis.
+Do not rely on facial-expression, eye-contact, or other video-only signals.
 Return strict JSON with this exact shape:
 {
   "analysis_status": "pending | partial | ready",
@@ -101,7 +107,7 @@ def build_turn_analysis_user(
     return (
         f"Peer line:\n{peer_message}\n\n"
         f"User response transcript:\n{user_transcript}\n\n"
-        f"Imentiv and chunk summary:\n{merged_summary_json}"
+        f"Tone and transcript summary:\n{merged_summary_json}"
     )
 
 
@@ -143,7 +149,9 @@ def build_momentum_user(
 
 FINAL_REPORT_SYSTEM_PROMPT = """\
 You are generating the final coaching report for a spoken social conversation simulator.
-Use the full transcript history and all available Imentiv-derived analysis.
+Use the full transcript history and all available tone-plus-transcript emotion analysis.
+Weigh vocal tone and transcript emotion evidence more than any other metadata.
+Do not rely on facial-expression, eye-contact, or other video-only signals.
 Return strict JSON with this exact shape:
 {
   "summary": "string",

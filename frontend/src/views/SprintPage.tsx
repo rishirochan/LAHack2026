@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Loader2, Mic, RefreshCw, Square } from 'lucide-react';
+import { startTransition, useEffect, useRef, useState } from 'react';
+import { Loader2, Mic, RefreshCw, Square, Volume2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
   Bar,
@@ -20,9 +20,12 @@ import {
   type SessionSetup,
   usePhaseASession,
 } from '@/hooks/usePhaseASession';
+import { Switch } from '@/components/ui/switch';
 
 const MAX_RECORDING_SECONDS = 20;
 const MIN_RECORDING_SECONDS = 2;
+const FAST_CAPTURE_MODE = 'fast';
+const POWERFUL_CAPTURE_MODE = 'powerful';
 const processingStages = [
   'Uploading recording',
   'Analyzing facial and vocal emotion',
@@ -35,8 +38,12 @@ const defaultSetup: SessionSetup = {
   targetEmotion: null,
 };
 
+type CaptureMode = typeof FAST_CAPTURE_MODE | typeof POWERFUL_CAPTURE_MODE;
+
 export default function SprintPage() {
   const [setup, setSetup] = useState<SessionSetup>(defaultSetup);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>(FAST_CAPTURE_MODE);
+  const [isPreparingPreview, setIsPreparingPreview] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [hasPreviewStream, setHasPreviewStream] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(MAX_RECORDING_SECONDS);
@@ -56,9 +63,14 @@ export default function SprintPage() {
     roundResult,
     summary,
     errorMessage,
+    isScenarioAudioPlaying,
+    isCritiqueAudioPlaying,
+    isEnding,
     startSession,
     uploadRecording,
     chooseContinue,
+    toggleScenarioTextToSpeech,
+    toggleCritiqueTextToSpeech,
     resetAll,
   } = usePhaseASession();
 
@@ -98,17 +110,23 @@ export default function SprintPage() {
     await startRecording();
   }
 
+  async function requestCaptureStream(mode: CaptureMode) {
+    return navigator.mediaDevices.getUserMedia(buildCaptureConstraints(mode));
+  }
+
+  function attachPreviewStream(stream: MediaStream) {
+    mediaStreamRef.current = stream;
+    if (previewRef.current) {
+      previewRef.current.srcObject = stream;
+    }
+    setHasPreviewStream(true);
+  }
+
   async function startRecording() {
     try {
       setLocalError('');
-      const stream =
-        mediaStreamRef.current ??
-        (await navigator.mediaDevices.getUserMedia({ video: true, audio: true }));
-      mediaStreamRef.current = stream;
-      setHasPreviewStream(true);
-      if (previewRef.current) {
-        previewRef.current.srcObject = stream;
-      }
+      const stream = mediaStreamRef.current ?? (await requestCaptureStream(captureMode));
+      attachPreviewStream(stream);
 
       videoChunksRef.current = [];
       const videoRecorder = new MediaRecorder(stream, {
@@ -142,6 +160,7 @@ export default function SprintPage() {
 
     if (durationSeconds < MIN_RECORDING_SECONDS) {
       stopRecordersWithoutUpload(videoRecorderRef.current, wavAudioRecorderRef.current);
+      stopTracks();
       setLocalError('That recording was too short. Try again with a full response.');
       return;
     }
@@ -151,6 +170,7 @@ export default function SprintPage() {
       stopWavAudioRecorder(wavAudioRecorderRef.current),
     ]);
     wavAudioRecorderRef.current = null;
+    stopTracks();
     try {
       await uploadRecording(videoBlob, audioBlob, durationSeconds);
     } catch {
@@ -180,7 +200,16 @@ export default function SprintPage() {
   function stopTracks() {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
+    if (previewRef.current) {
+      previewRef.current.srcObject = null;
+    }
     setHasPreviewStream(false);
+  }
+
+  function handleResetAll() {
+    stopTracks();
+    setCaptureMode(FAST_CAPTURE_MODE);
+    resetAll();
   }
 
   useEffect(() => {
@@ -191,8 +220,51 @@ export default function SprintPage() {
     };
   }, []);
 
-  const canRecord = status === 'recording' || isRecording;
+  useEffect(() => {
+    if (status !== 'recording' || isRecording) {
+      startTransition(() => {
+        setIsPreparingPreview(false);
+      });
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function syncPreviewStream() {
+      try {
+        setLocalError('');
+        setIsPreparingPreview(true);
+        stopTracks();
+        const stream = await requestCaptureStream(captureMode);
+        if (isCancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        attachPreviewStream(stream);
+        setIsPreparingPreview(false);
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        stopTracks();
+        setIsPreparingPreview(false);
+        setLocalError('Camera or microphone access was blocked. Allow access and try again.');
+      }
+    }
+
+    void syncPreviewStream();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [captureMode, isRecording, status]);
+
+  const canRecord = (status === 'recording' || isRecording) && !isPreparingPreview;
   const shownError = localError || errorMessage;
+  const isPowerfulMode = captureMode === POWERFUL_CAPTURE_MODE;
+  const captureModeDescription = isPowerfulMode
+    ? 'Powerful: slower analysis, maximum webcam quality'
+    : 'Fast: quicker analysis, lower webcam quality';
 
   if (status === 'setup') {
     return (
@@ -356,7 +428,7 @@ export default function SprintPage() {
         </div>
 
         <button
-          onClick={resetAll}
+          onClick={handleResetAll}
           className="rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
         >
           Start new session
@@ -373,7 +445,7 @@ export default function SprintPage() {
         </h1>
         <p className="mt-3 text-sm text-slate-600">{shownError || 'Try starting the drill again.'}</p>
         <button
-          onClick={resetAll}
+          onClick={handleResetAll}
           className="mt-6 rounded-full bg-navy-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-navy-600"
         >
           Restart
@@ -385,26 +457,61 @@ export default function SprintPage() {
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-h-[140px] flex-col justify-between gap-2">
           <div>
             <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-navy-500">Emotion Prompt</p>
             <p className="min-h-20 text-2xl font-semibold leading-relaxed text-slate-900">
               {scenarioPrompt || 'Generating your 2-sentence prompt...'}
             </p>
           </div>
-          <button
-            onClick={handleRegenerate}
-            disabled={status === 'processing'}
-            className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-slate-500 transition-colors hover:bg-cream-100 hover:text-slate-700"
-          >
-            <RefreshCw size={14} /> Regenerate
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void toggleScenarioTextToSpeech();
+              }}
+              disabled={!scenarioPrompt}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                isScenarioAudioPlaying
+                  ? 'bg-navy-500 text-white hover:bg-navy-600'
+                  : 'text-slate-500 hover:bg-cream-100 hover:text-slate-700'
+              }`}
+            >
+              {isScenarioAudioPlaying ? <Square size={14} /> : <Volume2 size={14} />}
+              {isScenarioAudioPlaying ? 'Stop audio' : 'Listen'}
+            </button>
+            <button
+              onClick={handleRegenerate}
+              disabled={status === 'processing'}
+              className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm text-slate-500 transition-colors hover:bg-cream-100 hover:text-slate-700"
+            >
+              <RefreshCw size={14} /> Regenerate
+            </button>
+          </div>
         </div>
       </section>
 
       {(status === 'critique' || roundResult) && (
         <section className="grid gap-6 lg:grid-cols-[1fr_280px]">
           <div className="rounded-3xl border border-cream-200 bg-white p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-semibold uppercase tracking-widest text-navy-500">Coach Critique</p>
+              <button
+                type="button"
+                onClick={() => {
+                  void toggleCritiqueTextToSpeech();
+                }}
+                disabled={!critique}
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  isCritiqueAudioPlaying
+                    ? 'bg-navy-500 text-white hover:bg-navy-600'
+                    : 'text-slate-500 hover:bg-cream-100 hover:text-slate-700'
+                }`}
+              >
+                {isCritiqueAudioPlaying ? <Square size={14} /> : <Volume2 size={14} />}
+                {isCritiqueAudioPlaying ? 'Stop audio' : 'Listen'}
+              </button>
+            </div>
             <MarkdownCritique content={critique} />
             <div className="mt-6 flex flex-wrap gap-3">
               <button
@@ -413,9 +520,10 @@ export default function SprintPage() {
                     setLocalError(error instanceof Error ? error.message : 'Could not send session decision.');
                   });
                 }}
+                disabled={isEnding}
                 className="rounded-full bg-navy-500 px-5 py-3 text-sm font-medium text-white shadow-md transition-all hover:bg-navy-600"
               >
-                Next Exercise
+                {isEnding ? 'Finishing...' : 'Next Exercise'}
               </button>
               <button
                 onClick={() => {
@@ -423,9 +531,10 @@ export default function SprintPage() {
                     setLocalError(error instanceof Error ? error.message : 'Could not send session decision.');
                   });
                 }}
+                disabled={isEnding}
                 className="rounded-full border border-cream-300 px-5 py-3 text-sm font-medium text-slate-700 transition-all hover:bg-cream-100"
               >
-                End Session
+                {isEnding ? 'Finishing...' : 'End Session'}
               </button>
             </div>
           </div>
@@ -434,12 +543,14 @@ export default function SprintPage() {
             score={roundResult?.derived_metrics?.overall_match_score ?? roundResult?.match_score ?? 0}
             displayMetrics={roundResult?.display_metrics ?? []}
             derivedMetrics={roundResult?.derived_metrics}
+            fillerWordCount={roundResult?.filler_word_count ?? 0}
+            fillerWordBreakdown={roundResult?.filler_word_breakdown ?? {}}
           />
         </section>
       )}
 
       {!(status === 'critique' || roundResult) && (
-        <section className="grid gap-6 lg:grid-cols-[1fr_260px]">
+        <section className={`grid gap-6 ${status === 'processing' ? 'lg:grid-cols-1' : 'lg:grid-cols-[1fr_260px]'}`}>
           <div className="flex min-h-[340px] flex-col items-center justify-center rounded-3xl border border-cream-200 bg-white p-8">
             {status === 'processing' ? (
               <ProcessingStages activeStage={processingStage} />
@@ -458,10 +569,14 @@ export default function SprintPage() {
                   {isRecording ? <Square className="h-10 w-10" /> : <Mic className="h-12 w-12" />}
                 </button>
                 <p className="mt-5 text-sm font-semibold text-slate-900">
-                  {isRecording ? 'Recording...' : 'Click to start recording'}
+                  {isRecording ? 'Recording...' : isPreparingPreview ? 'Preparing camera...' : 'Click to start recording'}
                 </p>
                 <p className={`mt-2 text-sm ${secondsRemaining <= 5 ? 'text-red-500' : 'text-slate-500'}`}>
-                  {isRecording ? `${secondsRemaining}s remaining` : 'You will have 20 seconds to answer.'}
+                  {isRecording
+                    ? `${secondsRemaining}s remaining`
+                    : isPreparingPreview
+                      ? 'Loading the selected camera mode.'
+                      : 'You will have 20 seconds to answer.'}
                 </p>
               </>
             )}
@@ -471,21 +586,42 @@ export default function SprintPage() {
             )}
           </div>
 
-          <div className="rounded-3xl border border-cream-200 bg-white p-4">
-            <p className="mb-3 text-sm font-semibold text-slate-900">Webcam preview</p>
-            <video
-              ref={previewRef}
-              autoPlay
-              muted
-              playsInline
-              className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
-            />
-            {!hasPreviewStream && (
-              <div className="mt-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm text-slate-500">
-                Camera preview appears once you start the recording.
+          {status !== 'processing' && (
+            <div className="rounded-3xl border border-cream-200 bg-white p-4">
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Webcam preview</p>
+                  <p className="mt-1 text-xs text-slate-500">{captureModeDescription}</p>
+                </div>
+                <div className="flex items-center gap-3 rounded-2xl bg-cream-100 px-3 py-2">
+                  <div className="text-right">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Analysis mode</p>
+                    <p className="text-sm font-semibold text-slate-900">{isPowerfulMode ? 'Powerful' : 'Fast'}</p>
+                  </div>
+                  <Switch
+                    checked={isPowerfulMode}
+                    onCheckedChange={(checked) => setCaptureMode(checked ? POWERFUL_CAPTURE_MODE : FAST_CAPTURE_MODE)}
+                    disabled={isRecording || isPreparingPreview}
+                    aria-label={`Analysis mode: ${isPowerfulMode ? 'Powerful' : 'Fast'}`}
+                  />
+                </div>
               </div>
-            )}
-          </div>
+              <video
+                ref={previewRef}
+                autoPlay
+                muted
+                playsInline
+                className="aspect-[4/3] w-full rounded-2xl bg-slate-100 object-cover"
+              />
+              {!hasPreviewStream && (
+                <div className="mt-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm text-slate-500">
+                  {isPreparingPreview
+                    ? 'Preparing the selected camera mode...'
+                    : 'Camera preview appears here when the selected mode is ready.'}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
     </div>
@@ -547,15 +683,18 @@ function MeasuredSignalsCard({
   score,
   displayMetrics,
   derivedMetrics,
+  fillerWordCount,
+  fillerWordBreakdown,
 }: {
   score: number;
   displayMetrics: DisplayMetric[];
   derivedMetrics?: PhaseADerivedMetrics;
+  fillerWordCount: number;
+  fillerWordBreakdown: Record<string, number>;
 }) {
-  const targetMoments = derivedMetrics?.top_target_moments ?? [];
   const mismatchMoments = derivedMetrics?.top_mismatch_moments ?? [];
-  const dataQualityFlags = derivedMetrics?.data_quality_flags ?? [];
-  const targetMomentsAreAggregate = targetMoments.some((moment) => moment.is_aggregate || moment.timestamp_ms === null);
+  const fillerEntries = Object.entries(fillerWordBreakdown).sort((left, right) => right[1] - left[1]);
+  const visibleMetrics = displayMetrics.filter((metric) => metric.key !== 'overall_match_score');
 
   return (
     <div className="space-y-4">
@@ -563,7 +702,7 @@ function MeasuredSignalsCard({
       <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
         <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">Measured Signals</p>
         <div className="space-y-3">
-          {displayMetrics.map((metric) => (
+          {visibleMetrics.map((metric) => (
             <div key={metric.key} className="rounded-2xl bg-cream-100 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-900">{metric.label}</p>
@@ -574,49 +713,36 @@ function MeasuredSignalsCard({
           ))}
         </div>
 
-        {(targetMoments.length > 0 || mismatchMoments.length > 0) && (
-          <div className="mt-5 space-y-4">
-            {targetMoments.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  {targetMomentsAreAggregate ? 'Strongest target signals' : 'Strongest target moments'}
-                </p>
-                <div className="mt-2 space-y-2">
-                  {targetMoments.map((moment, index) => (
-                    <p key={`${moment.timestamp_ms}-${moment.emotion_type}-${index}`} className="text-sm text-slate-600">
-                      {moment.timestamp_ms === null ? formatSignalSource(moment.source) : formatTimestamp(moment.timestamp_ms)}:{' '}
-                      {moment.emotion_type} at {Math.round(moment.confidence * 100)}%
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {mismatchMoments.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Notable mismatches</p>
-                <div className="mt-2 space-y-2">
-                  {mismatchMoments.map((moment, index) => (
-                    <p key={`${moment.timestamp_ms}-${moment.word}-${index}`} className="text-sm text-slate-600">
-                      {formatTimestamp(moment.timestamp_ms)} on "{moment.word}": face read {moment.face_emotion_type}, voice read{' '}
-                      {moment.voice_emotion_type}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
+        <div className="mt-5 rounded-2xl bg-cream-100 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-slate-900">Filler words this round</p>
+            <span className="text-sm font-semibold text-navy-600">{fillerWordCount}</span>
           </div>
-        )}
-
-        {dataQualityFlags.length > 0 && (
-          <div className="mt-5">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Data quality</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {dataQualityFlags.map((flag) => (
-                <span key={flag} className="rounded-full bg-cream-100 px-3 py-1 text-xs text-slate-600">
-                  {humanizeFlag(flag)}
+          {fillerEntries.length ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {fillerEntries.map(([word, count]) => (
+                <span key={word} className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                  {word} x{count}
                 </span>
               ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">No filler words were detected in this response.</p>
+          )}
+        </div>
+
+        {mismatchMoments.length > 0 && (
+          <div className="mt-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Notable mismatches</p>
+              <div className="mt-2 space-y-2">
+                {mismatchMoments.map((moment, index) => (
+                  <p key={`${moment.timestamp_ms}-${moment.word}-${index}`} className="text-sm text-slate-600">
+                    {formatTimestamp(moment.timestamp_ms)} on "{moment.word}": face read {moment.face_emotion_type}, voice read{' '}
+                    {moment.voice_emotion_type}
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -665,22 +791,32 @@ function formatTimestamp(timestampMs: number) {
   return `${(timestampMs / 1000).toFixed(1)}s`;
 }
 
-function humanizeFlag(flag: string) {
-  return flag.replaceAll('_', ' ');
-}
-
-function formatSignalSource(source?: string | null) {
-  if (!source) {
-    return 'Overall';
-  }
-  if (source.startsWith('overall_')) {
-    return 'Overall';
-  }
-  return source.replaceAll('_', ' ');
-}
-
 function getSupportedMimeType(candidates: string[]) {
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
+}
+
+function buildCaptureConstraints(mode: CaptureMode): MediaStreamConstraints {
+  if (mode === FAST_CAPTURE_MODE) {
+    return {
+      video: {
+        width: { ideal: 4096 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 },
+        facingMode: 'user',
+      },
+      audio: true,
+    };
+  }
+
+  return {
+    video: {
+      width: { ideal: 640, max: 640 },
+      height: { ideal: 480, max: 480 },
+      frameRate: { ideal: 10, max: 10 },
+      facingMode: 'user',
+    },
+    audio: true,
+  };
 }
 
 function stopRecordersWithoutUpload(

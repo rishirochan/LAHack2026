@@ -17,6 +17,7 @@ import {
 const CHUNK_DURATION_MS = 5_000;
 const DEFAULT_MAX_SECONDS = 45;
 const DEFAULT_WAVEFORM_BARS = Array(32).fill(6);
+const MEDIA_RECORDER_TIMESLICE_MS = 1_000;
 
 type PhaseCStatus =
   | 'setup'
@@ -333,6 +334,11 @@ export function usePhaseCSession() {
     }
 
     return new Promise<void>((resolve) => {
+      try {
+        recorder.requestData();
+      } catch {
+        // Ignore requestData failures during shutdown.
+      }
       recorder.addEventListener('stop', () => resolve(), { once: true });
       recorder.stop();
     });
@@ -364,8 +370,8 @@ export function usePhaseCSession() {
       }
     };
 
-    videoRecorder.start();
-    audioRecorder.start();
+    videoRecorder.start(MEDIA_RECORDER_TIMESLICE_MS);
+    audioRecorder.start(MEDIA_RECORDER_TIMESLICE_MS);
 
     activeChunkRef.current = {
       index,
@@ -442,8 +448,8 @@ export function usePhaseCSession() {
 
     fullVideoRecorderRef.current = fullVideoRecorder;
     fullAudioRecorderRef.current = fullAudioRecorder;
-    fullVideoRecorder.start();
-    fullAudioRecorder.start();
+    fullVideoRecorder.start(MEDIA_RECORDER_TIMESLICE_MS);
+    fullAudioRecorder.start(MEDIA_RECORDER_TIMESLICE_MS);
 
     recordStartMsRef.current = Date.now();
     await startChunkRecorder(stream, 0, 0);
@@ -632,6 +638,10 @@ export function usePhaseCSession() {
       if (fullVideoBlob.size > 0) {
         clearRecordedVideoUrl();
         setRecordedVideoUrl(URL.createObjectURL(fullVideoBlob));
+      }
+
+      if (fullAudioBlob.size === 0) {
+        throw new Error('The recording ended before any audio was captured. Try again and wait a second before stopping.');
       }
 
       stopMediaTracks();

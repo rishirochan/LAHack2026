@@ -458,7 +458,8 @@ class PersistenceApiTests(unittest.TestCase):
                 "scorecard": {
                     "overall_score": 91,
                     "average_wpm": 148.5,
-                    "filler_word_count": 0,
+                    "filler_word_count": 3,
+                    "filler_word_breakdown": {"um": 2, "like": 1},
                     "duration_seconds": 12.4,
                     "strengths": ["Clear pacing."],
                     "improvement_areas": ["Add more vocal variety."],
@@ -483,6 +484,7 @@ class PersistenceApiTests(unittest.TestCase):
         self.assertIn("media_refs", payload)
         self.assertEqual(payload["media_refs"][0]["kind"], "transcript_audio_upload")
         self.assertEqual(payload["phase_c_recording"]["scorecard"]["overall_score"], 91)
+        self.assertEqual(payload["phase_c_recording"]["scorecard"]["filler_word_breakdown"], {"um": 2, "like": 1})
         self.assertEqual(payload["phase_c_recording"]["written_summary"], "Strong session.")
         self.assertEqual(payload["phase_c_recording"]["merged_chunks"][0]["chunk_index"], 0)
 

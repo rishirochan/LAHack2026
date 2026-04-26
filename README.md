@@ -23,7 +23,6 @@ Copy `.env.example` to `.env`, then fill in real values. The frontend defaults t
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL_GEMMA`
-- `OPENROUTER_MODEL_HAIKU`
 - `ELEVENLABS_API_KEY`
 - `ELEVENLABS_DEFAULT_VOICE_ID`
 - `ELEVENLABS_STT_MODEL` (default `scribe_v1` is prefilled)

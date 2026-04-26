@@ -50,6 +50,7 @@ class ImentivClient:
             }
         )
         self.video = VideoAPI(self)
+        self.audio = AudioAPI(self)
 
     def request(
         self,
@@ -191,6 +192,50 @@ class VideoAPI:
                     raise
                 logger.debug("Imentiv video %s awaiting annotated_video_mp4", video_id)
                 response = {"id": video_id, "status": "processing"}
+                status = "processing"
+
+            if not wait or status in {"completed", "failed"}:
+                return response
+            time.sleep(poll_interval)
+
+
+class AudioAPI:
+    """Imentiv audio upload and multimodal analytics endpoints."""
+
+    def __init__(self, client: ImentivClient) -> None:
+        self.client = client
+
+    def upload(
+        self,
+        file_path: str,
+        *,
+        title: str | None = None,
+        description: str = "",
+    ) -> dict[str, Any]:
+        with Path(file_path).open("rb") as file_handle:
+            response = self.client.post(
+                "v2/audios",
+                files={"audio_file": (Path(file_path).name, file_handle)},
+                data={
+                    "title": title or Path(file_path).name,
+                    "description": description,
+                },
+            )
+        if "id" in response and "audio_id" not in response:
+            response["audio_id"] = response["id"]
+        return response
+
+    def get_results(self, audio_id: str, *, wait: bool = False, poll_interval: float = 2.0) -> dict[str, Any]:
+        while True:
+            try:
+                response = self.client.get(f"v2/audios/{audio_id}/multimodal-analytics")
+                status = str(response.get("status") or "").lower()
+                logger.debug("Imentiv audio %s response keys=%s status=%s", audio_id, sorted(response.keys()), status)
+            except (ImentivNotFoundError, ImentivServerError) as error:
+                if not wait:
+                    raise
+                logger.debug("Imentiv audio %s still processing after transient %s", audio_id, type(error).__name__)
+                response = {"id": audio_id, "status": "processing"}
                 status = "processing"
 
             if not wait or status in {"completed", "failed"}:

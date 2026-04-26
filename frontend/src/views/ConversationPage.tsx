@@ -1,7 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Mic, Power, RotateCcw, Square, Video } from 'lucide-react';
+import {
+  ChevronDown,
+  Loader2,
+  Mic,
+  Power,
+  RotateCcw,
+  SkipForward,
+  Square,
+  Video,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import {
   type ConversationTurn,
   type FinalReport,
@@ -9,24 +20,63 @@ import {
   usePhaseBConversation,
 } from '@/hooks/usePhaseBConversation';
 import { useVoiceSettings } from '@/context/VoiceSettingsContext';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Textarea } from '@/components/ui/textarea';
 
 const MIN_RECORDING_SECONDS = 2;
+const PRACTICE_PROMPT_WORD_LIMIT = 60;
+const PRACTICE_PROMPT_EXAMPLES = [
+  {
+    title: 'Roblox interview',
+    prompt:
+      'I have a Roblox product internship interview tomorrow. Make the interviewer sharp, warm, and curious about collaboration, product sense, and how I handle tradeoffs.',
+  },
+  {
+    title: 'Coffee chat',
+    prompt:
+      'I want to practice a coffee chat with an alum who works in venture. They are generous but busy, and I want to sound thoughtful without feeling rehearsed.',
+  },
+  {
+    title: 'Roommate reset',
+    prompt:
+      'I need to talk with my roommate about noise, dishes, and shared expectations. They are defensive at first but ultimately want things to work.',
+  },
+  {
+    title: 'Salary negotiation',
+    prompt:
+      'I want to practice negotiating a job offer with a recruiter who likes me but is careful about compensation bands and wants me to justify my ask clearly.',
+  },
+  {
+    title: 'Difficult manager',
+    prompt:
+      'I need to tell my manager I am overloaded and need to reset priorities. They move fast, interrupt, and care a lot about ownership and follow-through.',
+  },
+  {
+    title: 'Networking follow-up',
+    prompt:
+      'I want to practice following up with someone I met at a hackathon. They are friendly, accomplished, and deciding whether I am worth introducing to their team.',
+  },
+];
 
 export default function ConversationPage() {
   const { selectedVoiceId, speechRate } = useVoiceSettings();
+  const [playPeerVoice, setPlayPeerVoice] = useState(true);
+  const [isExamplesOpen, setIsExamplesOpen] = useState(false);
+  const [practicePromptInput, setPracticePromptInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(45);
   const [localError, setLocalError] = useState('');
   const previewRef = useRef<HTMLVideoElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const videoRecorderRef = useRef<MediaRecorder | null>(null);
   const audioCaptureRef = useRef<TurnAudioCapture | null>(null);
   const videoChunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef<number>(0);
   const timerRef = useRef<number | null>(null);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
   const {
     status,
+    practicePrompt,
     scenario,
     peerProfile,
     starterTopic,
@@ -37,6 +87,9 @@ export default function ConversationPage() {
     errorMessage,
     maxRecordingSeconds,
     isPeerSpeaking,
+    replayingTurnIndex,
+    skipPeerAudio,
+    replayPeerMessage,
     startSession,
     submitTurn,
     endSession,
@@ -44,9 +97,19 @@ export default function ConversationPage() {
   } = usePhaseBConversation({
     voiceId: selectedVoiceId,
     speechRate,
+    playPeerVoice,
   });
 
   const activeError = localError || errorMessage;
+  const normalizedPracticePrompt = useMemo(
+    () => normalizePracticePrompt(practicePromptInput),
+    [practicePromptInput],
+  );
+  const practicePromptWordCount = useMemo(
+    () => countWords(normalizedPracticePrompt),
+    [normalizedPracticePrompt],
+  );
+  const promptTooLong = practicePromptWordCount > PRACTICE_PROMPT_WORD_LIMIT;
   const conversationTurns = useMemo(() => {
     return currentTurn ? [...turns, currentTurn] : turns;
   }, [currentTurn, turns]);
@@ -56,8 +119,16 @@ export default function ConversationPage() {
 
   async function handleStart() {
     setLocalError('');
+    if (!normalizedPracticePrompt) {
+      setLocalError('Describe the conversation you want to emulate before starting.');
+      return;
+    }
+    if (promptTooLong) {
+      setLocalError(`Keep the brief to ${PRACTICE_PROMPT_WORD_LIMIT} words or fewer.`);
+      return;
+    }
     try {
-      await startSession();
+      await startSession(normalizedPracticePrompt);
     } catch (error) {
       setLocalError(getErrorMessage(error, 'Failed to start the conversation.'));
     }
@@ -65,11 +136,28 @@ export default function ConversationPage() {
 
   async function handleEnd() {
     setLocalError('');
+    stopTimer();
+    setIsRecording(false);
+    stopRecordersWithoutUpload(videoRecorderRef.current, audioCaptureRef.current);
+    videoRecorderRef.current = null;
+    audioCaptureRef.current = null;
+    videoChunksRef.current = [];
+    stopTracks();
     try {
       await endSession();
     } catch {
       setLocalError('Could not finish the session cleanly.');
     }
+  }
+
+  function togglePeerVoice() {
+    setPlayPeerVoice((current) => {
+      const next = !current;
+      if (!next && isPeerSpeaking) {
+        skipPeerAudio();
+      }
+      return next;
+    });
   }
 
   async function toggleRecording() {
@@ -120,6 +208,7 @@ export default function ConversationPage() {
       videoRecorderRef.current = null;
       audioCaptureRef.current = null;
       videoChunksRef.current = [];
+      stopTracks();
       setLocalError('That recording was too short. Try again with a full response.');
       return;
     }
@@ -132,6 +221,7 @@ export default function ConversationPage() {
     videoRecorderRef.current = null;
     audioCaptureRef.current = null;
     videoChunksRef.current = [];
+    stopTracks();
     try {
       await submitTurn(
         videoBlob,
@@ -183,17 +273,20 @@ export default function ConversationPage() {
   function stopTracks() {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
+    if (previewRef.current) {
+      previewRef.current.srcObject = null;
+    }
   }
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversationTurns, processingStage, status]);
 
   useEffect(() => {
     if (status !== 'setup') {
       void ensurePreviewStream();
     }
   }, [status]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [conversationTurns, processingStage, status]);
 
   useEffect(() => {
     setSecondsRemaining(maxRecordingSeconds);
@@ -209,59 +302,91 @@ export default function ConversationPage() {
 
   if (status === 'setup') {
     return (
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div>
-          <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-            Conversation Practice
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Talk with a generated peer, respond on camera, and get a balanced conversation report.
-          </p>
-        </div>
-
-        <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">
-              Session Shape
+      <div className="mx-auto max-w-6xl space-y-8">
+        <section className="mx-auto w-full max-w-4xl rounded-[32px] border border-cream-200 bg-white p-8 shadow-sm sm:p-10">
+          <div className="text-center">
+            <p className="text-sm font-semibold uppercase tracking-widest text-navy-500">Session Shape</p>
+            <h2 className="mt-4 font-['Playfair_Display'] text-4xl font-semibold leading-tight text-slate-900 sm:text-5xl">
+              Start with the conversation you want to emulate
             </h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600">
-              We generate the peer and topic automatically. Each turn is one short camera response, fast
-              transcription drives the next reply, and video analysis keeps running in the background.
+            <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600">
+              Write a short brief about the real interaction you want to practice. We infer the other
+              person, their personality, the stakes, and the opening move from that brief so the session
+              feels grounded in something you actually care about.
             </p>
+          </div>
 
-            <div className="mt-8 space-y-3 rounded-2xl border border-cream-200 bg-cream-50 p-4 text-sm text-slate-600">
-              <p>One peer persona is generated for the full session, then each response shapes the next turn.</p>
-              <p>Voice playback follows your selected Settings voice when one is configured.</p>
-              <p>Sessions end naturally after enough momentum has been established or when you end them manually.</p>
-            </div>
-
-            <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-              Camera video and microphone audio are uploaded for analysis during the session. Media is stored
-              as session-linked files rather than inside the session document itself.
-            </div>
-
-            <button
-              type="button"
-              onClick={handleStart}
-              className="mt-8 rounded-full bg-navy-500 px-6 py-3 text-sm font-medium text-white shadow-md transition hover:bg-navy-600"
+          <div className="mx-auto mt-10 max-w-3xl rounded-[32px] border border-navy-100 bg-[linear-gradient(140deg,#fffdf7_0%,#f8f2e2_55%,#eef4ff_100%)] p-6 shadow-sm sm:p-7">
+            <label
+              htmlFor="practice-prompt"
+              className="block text-center text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"
             >
-              Start Conversation
-            </button>
-          </div>
-
-          <div className="rounded-3xl border border-cream-200 bg-white p-8 shadow-sm">
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">
-              What Gets Scored
-            </h2>
-            <div className="mt-4 space-y-3 text-sm text-slate-600">
-              <MetricRow label="Conversation momentum" />
-              <MetricRow label="Content quality" />
-              <MetricRow label="Emotional delivery" />
-              <MetricRow label="Energy matching" />
-              <MetricRow label="Authenticity" />
-              <MetricRow label="Follow-up invitation" />
+              What conversation do you want to practice?
+            </label>
+            <Textarea
+              id="practice-prompt"
+              value={practicePromptInput}
+              onChange={(event) => {
+                setPracticePromptInput(event.target.value);
+                setLocalError('');
+              }}
+              placeholder="I have a Roblox interview tomorrow. Make the interviewer sharp but encouraging, and focused on product thinking, collaboration, and how I handle ambiguity."
+              className="mt-5 min-h-[220px] rounded-[28px] border-0 bg-white/90 px-6 py-5 text-base leading-7 text-slate-700 shadow-sm ring-1 ring-cream-200 placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy-200"
+            />
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+              <p>Be specific about the person, stakes, tone, and what kind of conversation this is.</p>
+              <p className={promptTooLong ? 'font-semibold text-red-600' : ''}>
+                {practicePromptWordCount}/{PRACTICE_PROMPT_WORD_LIMIT} words
+              </p>
             </div>
           </div>
+
+          <Collapsible open={isExamplesOpen} onOpenChange={setIsExamplesOpen} className="mt-8">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full border border-cream-300 bg-cream-50 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-navy-200 hover:bg-white"
+                >
+                  Try one
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${isExamplesOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <button
+                type="button"
+                onClick={handleStart}
+                disabled={!normalizedPracticePrompt || promptTooLong}
+                className="rounded-full bg-navy-500 px-8 py-3.5 text-sm font-medium text-white shadow-md transition hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+              >
+                Start Conversation
+              </button>
+            </div>
+            <CollapsibleContent className="data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down overflow-hidden">
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {PRACTICE_PROMPT_EXAMPLES.map((example) => (
+                  <button
+                    key={example.title}
+                    type="button"
+                    onClick={() => {
+                      setPracticePromptInput(example.prompt);
+                      setLocalError('');
+                      setIsExamplesOpen(false);
+                    }}
+                    className="rounded-2xl border border-cream-200 bg-cream-50 p-4 text-left transition hover:border-navy-200 hover:bg-white"
+                  >
+                    <p className="text-sm font-semibold text-slate-900">{example.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{example.prompt}</p>
+                  </button>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {activeError && (
+            <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{activeError}</p>
+          )}
         </section>
       </div>
     );
@@ -280,9 +405,28 @@ export default function ConversationPage() {
                 ? `${peerProfile.role} • ${scenario ?? peerProfile.scenario} • topic: ${starterTopic ?? 'loading'}`
                 : 'Generating a peer and opening topic.'}
             </p>
+            {practicePrompt && (
+              <p className="mt-2 inline-flex max-w-3xl rounded-full bg-cream-50 px-3 py-1.5 text-xs text-slate-600">
+                Simulating: {practicePrompt}
+              </p>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={togglePeerVoice}
+              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition ${
+                playPeerVoice
+                  ? 'border-cream-300 text-slate-700 hover:bg-cream-100'
+                  : 'border-navy-200 bg-navy-50 text-navy-700 hover:bg-navy-100'
+              }`}
+              aria-pressed={!playPeerVoice}
+              title={playPeerVoice ? 'Switch future peer turns to text only' : 'Turn peer voice back on'}
+            >
+              {playPeerVoice ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              {playPeerVoice ? 'Voice on' : 'Text only'}
+            </button>
             <StatusPill
               label={
                 status === 'processing'
@@ -311,7 +455,14 @@ export default function ConversationPage() {
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {conversationTurns.map((turn) => (
-            <TurnTranscript key={turn.turn_index} turn={turn} />
+            <TurnTranscript
+              key={turn.turn_index}
+              turn={turn}
+              isReplaying={replayingTurnIndex === turn.turn_index}
+              onReplay={() => {
+                void replayPeerMessage(turn.turn_index, turn.prompt_text);
+              }}
+            />
           ))}
           {showPeerTypingBubble && <PeerTypingBubble />}
           {status === 'processing' && (
@@ -341,14 +492,27 @@ export default function ConversationPage() {
               {isRecording ? 'Stop recording' : 'Record response'}
             </button>
 
+            {isPeerSpeaking && playPeerVoice && (
+              <button
+                type="button"
+                onClick={skipPeerAudio}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-cream-300 px-5 text-sm font-medium text-slate-700 transition hover:bg-cream-100"
+              >
+                <SkipForward className="h-4 w-4" />
+                Skip voice
+              </button>
+            )}
+
             <p className="text-sm text-slate-500">
               {isRecording
                 ? `${secondsRemaining}s remaining`
                 : status === 'recording'
                   ? `Keep it between ${MIN_RECORDING_SECONDS} and ${maxRecordingSeconds} seconds.`
                   : isPeerSpeaking
-                    ? 'Wait for the peer audio to finish.'
-                    : 'The next recording window will open automatically.'}
+                    ? 'Wait for the peer audio to finish, or skip it and answer from the text bubble.'
+                    : !playPeerVoice
+                      ? 'Peer voice is off, so new turns will arrive as text only.'
+                      : 'The next recording window will open automatically.'}
             </p>
           </div>
 
@@ -377,6 +541,7 @@ export default function ConversationPage() {
           <h2 className="text-sm font-semibold uppercase tracking-widest text-navy-500">Peer Profile</h2>
           {peerProfile ? (
             <div className="mt-4 space-y-3 text-sm text-slate-600">
+              {practicePrompt ? <InfoPair label="Your brief" value={practicePrompt} /> : null}
               <InfoPair label="Name" value={peerProfile.name} />
               <InfoPair label="Role" value={peerProfile.role} />
               <InfoPair label="Vibe" value={peerProfile.vibe} />
@@ -418,12 +583,31 @@ export default function ConversationPage() {
   );
 }
 
-function TurnTranscript({ turn }: { turn: ConversationTurn }) {
+function TurnTranscript({
+  turn,
+  isReplaying,
+  onReplay,
+}: {
+  turn: ConversationTurn;
+  isReplaying: boolean;
+  onReplay: () => void;
+}) {
   return (
     <div className="space-y-3">
       <div className="flex justify-start">
-        <div className="max-w-[80%] rounded-2xl rounded-bl-md border border-cream-200 bg-cream-50 px-4 py-3 text-sm leading-6 text-slate-700">
-          {turn.prompt_text}
+        <div className="flex max-w-[80%] items-start gap-2">
+          <div className="rounded-2xl rounded-bl-md border border-cream-200 bg-cream-50 px-4 py-3 text-sm leading-6 text-slate-700">
+            {turn.prompt_text}
+          </div>
+          <button
+            type="button"
+            onClick={onReplay}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cream-300 bg-white text-slate-600 transition hover:bg-cream-100"
+            aria-label="Replay peer message"
+            title="Replay peer message"
+          >
+            {isReplaying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
+          </button>
         </div>
       </div>
       {turn.transcript ? (
@@ -529,15 +713,6 @@ function FinalReportCard({
   );
 }
 
-function MetricRow({ label }: { label: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
-      <span>{label}</span>
-      <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-500">0-100</span>
-    </div>
-  );
-}
-
 function StatusPill({
   label,
   tone,
@@ -585,6 +760,18 @@ function BulletList({ title, items }: { title: string; items: string[] }) {
       </div>
     </div>
   );
+}
+
+function countWords(value: string) {
+  const normalized = normalizePracticePrompt(value);
+  if (!normalized) {
+    return 0;
+  }
+  return normalized.split(' ').length;
+}
+
+function normalizePracticePrompt(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function getSupportedMimeType(candidates: string[]) {

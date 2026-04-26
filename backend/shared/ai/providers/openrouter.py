@@ -17,8 +17,3 @@ def create_openrouter_chat_model(settings: AISettings, model_name: str) -> ChatO
 def create_gemma_model(settings: AISettings) -> ChatOpenAI:
     """Build the default Gemma model client."""
     return create_openrouter_chat_model(settings, settings.openrouter_model_gemma)
-
-
-def create_haiku_model(settings: AISettings) -> ChatOpenAI:
-    """Build the default Haiku model client."""
-    return create_openrouter_chat_model(settings, settings.openrouter_model_haiku)

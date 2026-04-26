@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { fetchVoicePreviewAudio } from '@/lib/tts-api';
 
 export type ConversationStatus =
   | 'setup'
@@ -61,6 +62,7 @@ export type FinalReport = {
 
 type SessionStateResponse = {
   session_id: string;
+  practice_prompt: string | null;
   scenario: string | null;
   scenario_preference: string | null;
   peer_profile: PeerProfile | null;
@@ -82,17 +84,34 @@ type WebsocketEvent = {
   payload: Record<string, unknown>;
 };
 
+type CompleteTurnResponse = {
+  status: string;
+  continue_conversation: boolean;
+  completed_turn?: ConversationTurn | null;
+  turn_analysis?: TurnAnalysis | null;
+  final_report?: FinalReport | null;
+};
+
+type EndSessionResponse = {
+  status: string;
+  turns: ConversationTurn[];
+  final_report?: FinalReport | null;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000';
 
 export function usePhaseBConversation(options?: {
   voiceId?: string | null;
   speechRate?: number;
+  playPeerVoice?: boolean;
 }) {
   const voiceId = options?.voiceId ?? null;
   const speechRate = options?.speechRate ?? 1;
+  const playPeerVoice = options?.playPeerVoice ?? true;
   const [status, setStatus] = useState<ConversationStatus>('setup');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [practicePrompt, setPracticePrompt] = useState<string | null>(null);
   const [scenario, setScenario] = useState<string | null>(null);
   const [peerProfile, setPeerProfile] = useState<PeerProfile | null>(null);
   const [starterTopic, setStarterTopic] = useState<string | null>(null);
@@ -103,30 +122,80 @@ export function usePhaseBConversation(options?: {
   const [errorMessage, setErrorMessage] = useState('');
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState(45);
   const [isPeerSpeaking, setIsPeerSpeaking] = useState(false);
+  const [replayingTurnIndex, setReplayingTurnIndex] = useState<number | null>(null);
   const websocketRef = useRef<WebSocket | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const audioChunksRef = useRef<string[]>([]);
   const pendingRecordingReadyRef = useRef(false);
+  const peerSpeakingRef = useRef(false);
+  const skipPeerAudioRef = useRef(false);
+  const playPeerVoiceRef = useRef(playPeerVoice);
+  const audioPlaybackTokenRef = useRef(0);
+  const endRequestedRef = useRef(false);
+  const stopActiveAudioForLifecycle = useEffectEvent(() => {
+    stopActiveAudio();
+  });
 
-  async function startSession() {
+  playPeerVoiceRef.current = playPeerVoice;
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopActiveAudioForLifecycle();
+      }
+    };
+
+    const handlePageHide = () => {
+      stopActiveAudioForLifecycle();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      stopActiveAudioForLifecycle();
+      websocketRef.current?.close();
+      websocketRef.current = null;
+    };
+  }, []);
+
+  async function startSession(promptText?: string | null) {
+    endRequestedRef.current = false;
     clearSurface();
     setStatus('starting');
-    const response = await fetch(`${API_URL}/api/phase-b/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        voice_id: voiceId,
-      }),
-    });
+    setErrorMessage('');
+    const normalizedPrompt = promptText?.trim() ? promptText.trim() : null;
 
-    if (!response.ok) {
-      throw new Error('Could not start the conversation.');
+    try {
+      const response = await fetch(`${API_URL}/api/phase-b/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          practice_prompt: normalizedPrompt,
+          voice_id: voiceId,
+        }),
+      });
+
+      if (!response.ok) {
+        const detail = await safeDetail(response);
+        throw new Error(detail || 'Could not start the conversation.');
+      }
+
+      const data = (await response.json()) as { session_id: string };
+      setSessionId(data.session_id);
+      setPracticePrompt(normalizedPrompt);
+      connectWebsocket(data.session_id);
+    } catch (error) {
+      stopActiveAudio();
+      websocketRef.current?.close();
+      websocketRef.current = null;
+      setSessionId(null);
+      clearSurface();
+      setStatus('setup');
+      throw error;
     }
-
-    const data = (await response.json()) as { session_id: string };
-    setSessionId(data.session_id);
-    connectWebsocket(data.session_id);
-    await requestNextTurn(data.session_id);
   }
 
   async function requestNextTurn(idOverride?: string) {
@@ -134,13 +203,16 @@ export function usePhaseBConversation(options?: {
     if (!activeSessionId) {
       throw new Error('No active session.');
     }
+    if (endRequestedRef.current) {
+      return;
+    }
 
     setStatus('starting');
     setProcessingStage('');
     const response = await fetch(`${API_URL}/api/phase-b/sessions/${activeSessionId}/turns/next`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ voice_id: voiceId }),
+      body: JSON.stringify({ voice_id: voiceId, speak_peer_message: playPeerVoice }),
     });
 
     if (!response.ok) {
@@ -148,7 +220,6 @@ export function usePhaseBConversation(options?: {
       throw new Error(detail || 'Could not get the next peer turn.');
     }
 
-    await refreshSession(activeSessionId);
   }
 
   async function submitTurn(
@@ -189,27 +260,31 @@ export function usePhaseBConversation(options?: {
     }
 
     setProcessingStage('Transcribing your response');
-    const primaryTranscriptError = await tryTranscribeTurn(sessionId, turnIndex, audioBlob);
-    if (primaryTranscriptError) {
+    const primaryTranscriptResult = await tryTranscribeTurn(sessionId, turnIndex, audioBlob);
+    if (primaryTranscriptResult.errorMessage) {
       const canRetryWithFallback =
+        primaryTranscriptResult.retryable &&
         fallbackTranscriptAudioBlob != null &&
         fallbackTranscriptAudioBlob.size > 0 &&
         fallbackTranscriptAudioBlob.type === 'audio/wav' &&
         audioBlob.type !== 'audio/wav';
 
       if (!canRetryWithFallback) {
-        throw new Error(primaryTranscriptError);
+        throw new Error(primaryTranscriptResult.errorMessage);
       }
 
       setProcessingStage('Retrying transcription');
-      const fallbackTranscriptError = await tryTranscribeTurn(
+      const fallbackTranscriptResult = await tryTranscribeTurn(
         sessionId,
         turnIndex,
         fallbackTranscriptAudioBlob,
       );
-      if (fallbackTranscriptError) {
-        throw new Error(fallbackTranscriptError);
+      if (fallbackTranscriptResult.errorMessage) {
+        throw new Error(fallbackTranscriptResult.errorMessage);
       }
+      applyTranscriptToCurrentTurn(turnIndex, fallbackTranscriptResult.transcript);
+    } else {
+      applyTranscriptToCurrentTurn(turnIndex, primaryTranscriptResult.transcript);
     }
 
     setProcessingStage('Generating the next step');
@@ -217,6 +292,8 @@ export function usePhaseBConversation(options?: {
       `${API_URL}/api/phase-b/sessions/${sessionId}/turns/${turnIndex}/complete`,
       {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice_id: voiceId, speak_peer_message: playPeerVoice }),
       },
     );
 
@@ -225,19 +302,22 @@ export function usePhaseBConversation(options?: {
       throw new Error(detail || 'Could not complete the turn.');
     }
 
-    const completeData = (await completeResponse.json()) as {
-      continue_conversation: boolean;
-      final_report?: FinalReport | null;
-    };
-
-    await refreshSession(sessionId);
+    const completeData = (await completeResponse.json()) as CompleteTurnResponse;
+    if (completeData.completed_turn) {
+      applyCompletedTurn(completeData.completed_turn);
+    }
 
     if (completeData.final_report) {
       setFinalReport(completeData.final_report);
     }
 
+    if (endRequestedRef.current) {
+      return;
+    }
+
     if (completeData.continue_conversation) {
-      await requestNextTurn(sessionId);
+      setStatus('starting');
+      setProcessingStage('Generating the next step');
       return;
     }
 
@@ -249,23 +329,34 @@ export function usePhaseBConversation(options?: {
       return;
     }
 
+    endRequestedRef.current = true;
+    haltLiveConversation();
     setStatus('processing');
     setProcessingStage('Building final report');
-    const response = await fetch(`${API_URL}/api/phase-b/sessions/${sessionId}/end`, {
-      method: 'POST',
-    });
 
-    if (!response.ok) {
-      const detail = await safeDetail(response);
-      throw new Error(detail || 'Could not end the conversation.');
-    }
+    try {
+      const response = await fetch(`${API_URL}/api/phase-b/sessions/${sessionId}/end`, {
+        method: 'POST',
+      });
 
-    const data = (await response.json()) as { final_report?: FinalReport | null };
-    if (data.final_report) {
-      setFinalReport(data.final_report);
+      if (!response.ok) {
+        const detail = await safeDetail(response);
+        throw new Error(detail || 'Could not end the conversation.');
+      }
+
+      const data = (await response.json()) as EndSessionResponse;
+      if (data.final_report) {
+        setFinalReport(data.final_report);
+      }
+      setTurns(data.turns ?? []);
+      setCurrentTurn(null);
+      websocketRef.current?.close();
+      websocketRef.current = null;
+      setStatus('complete');
+    } catch (error) {
+      endRequestedRef.current = false;
+      throw error;
     }
-    await refreshSession(sessionId);
-    setStatus('complete');
   }
 
   async function refreshSession(idOverride?: string) {
@@ -284,6 +375,7 @@ export function usePhaseBConversation(options?: {
   }
 
   function connectWebsocket(id: string) {
+    stopActiveAudio();
     websocketRef.current?.close();
     const socket = new WebSocket(`${WS_URL}/api/phase-b/ws/${id}`);
     websocketRef.current = socket;
@@ -300,27 +392,54 @@ export function usePhaseBConversation(options?: {
   }
 
   function handleEvent(event: WebsocketEvent) {
+    if (endRequestedRef.current && event.type !== 'session_complete' && event.type !== 'error') {
+      return;
+    }
+
     switch (event.type) {
       case 'session_initialized':
         setScenario(String(event.payload.scenario ?? ''));
         setPeerProfile(event.payload.peer_profile as PeerProfile);
         setStarterTopic(String(event.payload.starter_topic ?? ''));
         break;
+      case 'prompt_generated': {
+        const promptText = String(event.payload.prompt_text ?? '');
+        const nextTurnIndex = Number(event.payload.turn_index ?? 0);
+        setProcessingStage('');
+        setCurrentTurn({
+          turn_index: Number.isFinite(nextTurnIndex) ? nextTurnIndex : 0,
+          prompt_text: promptText,
+          transcript: null,
+          analysis_status: 'pending',
+          turn_analysis: null,
+          chunks: [],
+        });
+        if (!playPeerVoiceRef.current && !audioElementRef.current && !peerSpeakingRef.current) {
+          pendingRecordingReadyRef.current = false;
+          setStatus('recording');
+        }
+        break;
+      }
       case 'processing_stage':
         setStatus('processing');
         setProcessingStage(String(event.payload.stage ?? ''));
         break;
       case 'tts_start':
         if (event.payload.audio_type === 'peer_message') {
+          stopActiveAudio();
           audioChunksRef.current = [];
           pendingRecordingReadyRef.current = false;
+          skipPeerAudioRef.current = false;
+          peerSpeakingRef.current = true;
           setIsPeerSpeaking(true);
           setStatus('listening');
         }
         break;
       case 'audio_chunk':
         if (event.payload.audio_type === 'peer_message') {
-          audioChunksRef.current.push(String(event.payload.chunk ?? ''));
+          if (!skipPeerAudioRef.current) {
+            audioChunksRef.current.push(String(event.payload.chunk ?? ''));
+          }
         }
         break;
       case 'tts_end':
@@ -331,20 +450,24 @@ export function usePhaseBConversation(options?: {
       case 'recording_ready':
         setMaxRecordingSeconds(Number(event.payload.max_seconds ?? 45));
         pendingRecordingReadyRef.current = true;
-        if (!audioElementRef.current) {
+        if (!audioElementRef.current && !peerSpeakingRef.current) {
           pendingRecordingReadyRef.current = false;
           setStatus('recording');
         }
         break;
       case 'turn_analysis_ready':
-        void refreshSession();
+        applyTurnAnalysis(
+          Number(event.payload.turn_index ?? -1),
+          normalizeTurnAnalysis(event.payload.turn_analysis),
+        );
         break;
       case 'session_complete':
+        endRequestedRef.current = true;
+        haltLiveConversation();
         if (event.payload.final_report) {
           setFinalReport(event.payload.final_report as FinalReport);
         }
         setStatus('complete');
-        void refreshSession();
         break;
       case 'error':
         setStatus('error');
@@ -358,9 +481,11 @@ export function usePhaseBConversation(options?: {
   async function playBufferedPeerAudio() {
     const base64Chunks = audioChunksRef.current.slice();
     audioChunksRef.current = [];
-    if (base64Chunks.length === 0) {
+    if (endRequestedRef.current || skipPeerAudioRef.current || base64Chunks.length === 0) {
+      peerSpeakingRef.current = false;
       setIsPeerSpeaking(false);
-      if (pendingRecordingReadyRef.current) {
+      if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
+        pendingRecordingReadyRef.current = false;
         setStatus('recording');
       }
       return;
@@ -370,45 +495,80 @@ export function usePhaseBConversation(options?: {
     const blob = base64ChunksToBlob(base64Chunks, 'audio/mpeg');
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audioElementRef.current = audio;
+    attachAudioElement(audio, {
+      onFinished: () => {
+        setReplayingTurnIndex(null);
+        peerSpeakingRef.current = false;
+        setIsPeerSpeaking(false);
+        if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
+          pendingRecordingReadyRef.current = false;
+          setStatus('recording');
+        }
+      },
+    });
     audio.playbackRate = clampSpeechRate(speechRate);
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      if (audioElementRef.current === audio) {
-        audioElementRef.current = null;
-      }
-      setIsPeerSpeaking(false);
-      if (pendingRecordingReadyRef.current) {
-        pendingRecordingReadyRef.current = false;
-        setStatus('recording');
-      }
-    };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      if (audioElementRef.current === audio) {
-        audioElementRef.current = null;
-      }
-      setIsPeerSpeaking(false);
-      if (pendingRecordingReadyRef.current) {
-        pendingRecordingReadyRef.current = false;
-        setStatus('recording');
-      }
-    };
     await audio.play().catch(() => {
-      URL.revokeObjectURL(url);
-      if (audioElementRef.current === audio) {
-        audioElementRef.current = null;
-      }
+      detachAudioElement(audio);
+      setReplayingTurnIndex(null);
+      peerSpeakingRef.current = false;
       setIsPeerSpeaking(false);
-      if (pendingRecordingReadyRef.current) {
+      if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
         pendingRecordingReadyRef.current = false;
         setStatus('recording');
       }
     });
   }
 
+  function skipPeerAudio() {
+    skipPeerAudioRef.current = true;
+    audioChunksRef.current = [];
+    stopActiveAudio();
+    peerSpeakingRef.current = false;
+    setIsPeerSpeaking(false);
+    if (!endRequestedRef.current && pendingRecordingReadyRef.current) {
+      pendingRecordingReadyRef.current = false;
+      setStatus('recording');
+    }
+  }
+
+  async function replayPeerMessage(turnIndex: number, text: string) {
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      return;
+    }
+
+    setErrorMessage('');
+    setReplayingTurnIndex(turnIndex);
+    stopActiveAudio();
+    const playbackToken = audioPlaybackTokenRef.current;
+
+    try {
+      const blob = await fetchVoicePreviewAudio({
+        voiceId,
+        voiceName: peerProfile?.name || 'Peer',
+        text: trimmedText,
+      });
+      if (playbackToken !== audioPlaybackTokenRef.current) {
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      attachAudioElement(audio, {
+        onFinished: () => {
+          setReplayingTurnIndex((current) => (current === turnIndex ? null : current));
+        },
+      });
+      audio.playbackRate = clampSpeechRate(speechRate);
+      await audio.play();
+    } catch (error) {
+      setReplayingTurnIndex((current) => (current === turnIndex ? null : current));
+      setErrorMessage(getErrorMessage(error, 'Could not replay that message.'));
+    }
+  }
+
   function applySessionState(data: SessionStateResponse) {
     setSessionId(data.session_id);
+    setPracticePrompt(data.practice_prompt);
     setScenario(data.scenario);
     setPeerProfile(data.peer_profile);
     setStarterTopic(data.starter_topic);
@@ -417,11 +577,59 @@ export function usePhaseBConversation(options?: {
     setFinalReport(data.final_report);
 
     if (data.status === 'complete') {
+      endRequestedRef.current = true;
+      haltLiveConversation();
       setStatus('complete');
     }
   }
 
+  function applyTranscriptToCurrentTurn(turnIndex: number, transcript: string) {
+    if (!transcript) {
+      return;
+    }
+
+    setCurrentTurn((existing) => {
+      if (!existing || existing.turn_index !== turnIndex) {
+        return existing;
+      }
+      return {
+        ...existing,
+        transcript,
+      };
+    });
+  }
+
+  function attachAudioElement(
+    audio: HTMLAudioElement,
+    options: {
+      onFinished: () => void;
+    },
+  ) {
+    audioElementRef.current = audio;
+    audio.onended = () => {
+      detachAudioElement(audio);
+      options.onFinished();
+    };
+    audio.onerror = () => {
+      detachAudioElement(audio);
+      options.onFinished();
+    };
+  }
+
+  function detachAudioElement(audio: HTMLAudioElement) {
+    audio.onended = null;
+    audio.onerror = null;
+    if (audio.src.startsWith('blob:')) {
+      URL.revokeObjectURL(audio.src);
+    }
+    if (audioElementRef.current === audio) {
+      audioElementRef.current = null;
+    }
+  }
+
   function stopActiveAudio() {
+    audioPlaybackTokenRef.current += 1;
+    setReplayingTurnIndex(null);
     const audio = audioElementRef.current;
     if (!audio) {
       return;
@@ -429,13 +637,61 @@ export function usePhaseBConversation(options?: {
 
     audio.pause();
     audio.currentTime = 0;
-    if (audio.src.startsWith('blob:')) {
-      URL.revokeObjectURL(audio.src);
+    detachAudioElement(audio);
+  }
+
+  function applyCompletedTurn(turn: ConversationTurn) {
+    setTurns((existing) => {
+      const nextTurns = existing.filter((item) => item.turn_index !== turn.turn_index);
+      nextTurns.push(turn);
+      nextTurns.sort((left, right) => left.turn_index - right.turn_index);
+      return nextTurns;
+    });
+    setCurrentTurn((existing) =>
+      existing && existing.turn_index === turn.turn_index ? null : existing,
+    );
+  }
+
+  function applyTurnAnalysis(turnIndex: number, turnAnalysis: TurnAnalysis | null) {
+    if (turnIndex < 0 || !turnAnalysis) {
+      return;
     }
-    audioElementRef.current = null;
+
+    setCurrentTurn((existing) => {
+      if (!existing || existing.turn_index !== turnIndex) {
+        return existing;
+      }
+      return {
+        ...existing,
+        analysis_status: turnAnalysis.analysis_status,
+        turn_analysis: turnAnalysis,
+      };
+    });
+
+    setTurns((existing) =>
+      existing.map((turn) =>
+        turn.turn_index === turnIndex
+          ? {
+              ...turn,
+              analysis_status: turnAnalysis.analysis_status,
+              turn_analysis: turnAnalysis,
+            }
+          : turn,
+      ),
+    );
+  }
+
+  function haltLiveConversation() {
+    stopActiveAudio();
+    audioChunksRef.current = [];
+    pendingRecordingReadyRef.current = false;
+    skipPeerAudioRef.current = true;
+    peerSpeakingRef.current = false;
+    setIsPeerSpeaking(false);
   }
 
   function clearSurface() {
+    setPracticePrompt(null);
     setScenario(null);
     setPeerProfile(null);
     setStarterTopic(null);
@@ -445,15 +701,19 @@ export function usePhaseBConversation(options?: {
     setProcessingStage('');
     setErrorMessage('');
     setMaxRecordingSeconds(45);
+    setReplayingTurnIndex(null);
+    endRequestedRef.current = false;
+    peerSpeakingRef.current = false;
     setIsPeerSpeaking(false);
+    audioChunksRef.current = [];
+    pendingRecordingReadyRef.current = false;
+    skipPeerAudioRef.current = false;
   }
 
   function resetAll() {
     stopActiveAudio();
     websocketRef.current?.close();
     websocketRef.current = null;
-    audioChunksRef.current = [];
-    pendingRecordingReadyRef.current = false;
     setSessionId(null);
     setStatus('setup');
     clearSurface();
@@ -462,6 +722,7 @@ export function usePhaseBConversation(options?: {
   return {
     status,
     sessionId,
+    practicePrompt,
     scenario,
     peerProfile,
     starterTopic,
@@ -472,6 +733,9 @@ export function usePhaseBConversation(options?: {
     errorMessage,
     maxRecordingSeconds,
     isPeerSpeaking,
+    replayingTurnIndex,
+    skipPeerAudio,
+    replayPeerMessage,
     startSession,
     submitTurn,
     requestNextTurn,
@@ -493,11 +757,21 @@ async function tryTranscribeTurn(sessionId: string, turnIndex: number, audioBlob
   );
 
   if (transcriptResponse.ok) {
-    return '';
+    const data = (await transcriptResponse.json()) as { transcript?: unknown };
+    return {
+      transcript: typeof data.transcript === 'string' ? data.transcript : '',
+      errorMessage: '',
+      retryable: false,
+    };
   }
 
   const detail = await safeDetail(transcriptResponse);
-  return detail || 'Could not transcribe the turn.';
+  const errorMessage = detail || 'Could not transcribe the turn.';
+  return {
+    transcript: '',
+    errorMessage,
+    retryable: isRetryableTranscriptionError(transcriptResponse.status, errorMessage),
+  };
 }
 
 async function safeDetail(response: Response) {
@@ -544,6 +818,21 @@ function normalizeDetail(detail: unknown): string {
   return String(detail);
 }
 
+function isRetryableTranscriptionError(status: number, detail: string): boolean {
+  if (status === 503) {
+    return false;
+  }
+
+  const normalized = detail.toLowerCase();
+  return !(
+    normalized.includes('speech_to_text permission') ||
+    normalized.includes('configured elevenlabs api key') ||
+    normalized.includes('api key was rejected') ||
+    normalized.includes('missing_permissions') ||
+    normalized.includes('unauthorized')
+  );
+}
+
 function base64ChunksToBlob(chunks: string[], mimeType: string) {
   const byteArrays = chunks.map((chunk) => {
     const binary = window.atob(chunk);
@@ -573,4 +862,38 @@ function clampSpeechRate(value: number) {
     return 1;
   }
   return Math.max(0.5, Math.min(1.5, value));
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
+function normalizeTurnAnalysis(value: unknown): TurnAnalysis | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<TurnAnalysis>;
+  if (typeof candidate.summary !== 'string' || !Array.isArray(candidate.strengths)) {
+    return null;
+  }
+
+  return {
+    analysis_status:
+      candidate.analysis_status === 'ready' || candidate.analysis_status === 'partial'
+        ? candidate.analysis_status
+        : 'pending',
+    summary: candidate.summary,
+    momentum_score: Number(candidate.momentum_score ?? 0),
+    content_quality_score: Number(candidate.content_quality_score ?? 0),
+    emotional_delivery_score: Number(candidate.emotional_delivery_score ?? 0),
+    energy_match_score: Number(candidate.energy_match_score ?? 0),
+    authenticity_score: Number(candidate.authenticity_score ?? 0),
+    follow_up_invitation_score: Number(candidate.follow_up_invitation_score ?? 0),
+    strengths: candidate.strengths.map(String),
+    growth_edges: Array.isArray(candidate.growth_edges) ? candidate.growth_edges.map(String) : [],
+  };
 }

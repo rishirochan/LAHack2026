@@ -3,7 +3,7 @@
 from functools import lru_cache
 
 from backend.shared.ai.providers.elevenlabs import create_elevenlabs_client
-from backend.shared.ai.providers.openrouter import create_gemma_model, create_haiku_model
+from backend.shared.ai.providers.openrouter import create_gemma_model
 from backend.shared.ai.settings import AISettings, get_settings
 
 
@@ -13,7 +13,6 @@ class AIServiceFacade:
     def __init__(self, settings: AISettings):
         self.settings = settings
         self.gemma_model = create_gemma_model(settings) if settings.openrouter_api_key else None
-        self.haiku_model = create_haiku_model(settings) if settings.openrouter_api_key else None
         self.elevenlabs_client = create_elevenlabs_client(settings)
 
 

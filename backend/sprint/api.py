@@ -1,12 +1,14 @@
 """FastAPI app for sprint backend features."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from urllib.parse import quote
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from urllib.parse import quote
 
+from elevenlabs.core.api_error import ApiError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -65,6 +67,69 @@ RETRY_INVALID_CHUNKS_MESSAGE = "Some recording chunks were missing or overlapped
 PHASE_A_MEDIA_KINDS = {"video", "audio"}
 PHASE_B_MEDIA_KINDS = {"video", "audio"}
 PHASE_C_MEDIA_KINDS = {"video", "audio"}
+
+
+def _normalize_upstream_error_body(body: object) -> dict[str, object]:
+    if isinstance(body, dict):
+        return body
+    if isinstance(body, str):
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            return {"message": body}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"message": body}
+    return {}
+
+
+def _extract_upstream_error_fields(error: ApiError) -> tuple[str, str]:
+    body = _normalize_upstream_error_body(error.body)
+    detail = body.get("detail")
+
+    if isinstance(detail, dict):
+        status = str(detail.get("status") or "").strip()
+        message = str(
+            detail.get("message")
+            or detail.get("detail")
+            or body.get("message")
+            or ""
+        ).strip()
+        return status, message
+
+    if isinstance(detail, str):
+        return "", detail.strip()
+
+    message = str(body.get("message") or "").strip()
+    return "", message
+
+
+def _elevenlabs_transcription_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, ApiError):
+        upstream_status = int(error.status_code or 0)
+        upstream_error, upstream_message = _extract_upstream_error_fields(error)
+
+        if upstream_error == "missing_permissions" and "speech_to_text" in upstream_message:
+            return HTTPException(
+                status_code=503,
+                detail=(
+                    "Speech transcription is unavailable because the configured ElevenLabs API key "
+                    "does not include the speech_to_text permission. Update ELEVENLABS_API_KEY to "
+                    "a key with Speech-to-Text access."
+                ),
+            )
+
+        if upstream_status in {401, 403}:
+            detail = "Speech transcription is unavailable because the configured ElevenLabs API key was rejected."
+            if upstream_message:
+                detail = f"{detail} Upstream said: {upstream_message}"
+            return HTTPException(status_code=503, detail=detail)
+
+        if upstream_message:
+            return HTTPException(status_code=502, detail=f"Transcription failed: {upstream_message}")
+
+    return HTTPException(status_code=502, detail=f"Transcription failed: {error}")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -160,9 +225,6 @@ async def preview_tts_voice(payload: dict[str, object]) -> Response:
     voice_name = str(payload.get("voice_name") or "").strip()
     text = str(payload.get("text") or "").strip() or _build_voice_preview_text(voice_name)
 
-    if voice_id is None:
-        raise HTTPException(status_code=400, detail="A voice_id is required to preview TTS.")
-
     try:
         audio = await synthesize_tts_audio(
             ai_service=get_ai_service(),
@@ -213,11 +275,12 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
     if session.get("mode") != "phase_c":
         return None
 
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
     raw_state = session.get("raw_state")
     if not isinstance(raw_state, dict):
         return {
-            "scorecard": None,
-            "written_summary": "",
+            "scorecard": _phase_c_replay_scorecard_from_summary(summary),
+            "written_summary": str(summary.get("written_summary") or ""),
             "merged_chunks": [],
             "full_transcript": "",
             "transcript_words": [],
@@ -229,8 +292,8 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
     completed_recording = raw_state.get("completed_recording")
     if not isinstance(completed_recording, dict):
         return {
-            "scorecard": None,
-            "written_summary": "",
+            "scorecard": _phase_c_replay_scorecard_from_summary(summary),
+            "written_summary": str(summary.get("written_summary") or ""),
             "merged_chunks": [],
             "full_transcript": "",
             "transcript_words": [],
@@ -265,10 +328,10 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
         word_correlations = build_word_correlations(merged_analysis)
 
     return {
-        "scorecard": scorecard,
+        "scorecard": scorecard if isinstance(scorecard, dict) else _phase_c_replay_scorecard_from_summary(summary),
         "written_summary": completed_recording.get("written_summary")
         if isinstance(completed_recording.get("written_summary"), str)
-        else "",
+        else str(summary.get("written_summary") or ""),
         "merged_chunks": merged_chunks if isinstance(merged_chunks, list) else [],
         "full_transcript": full_transcript,
         "transcript_words": transcript_words,
@@ -278,6 +341,48 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
     }
 
 
+
+def _phase_c_replay_scorecard_from_summary(summary: dict[str, object]) -> dict[str, object] | None:
+    if not summary:
+        return None
+
+    if summary.get("overall_score") is None:
+        return None
+
+    return {
+        "duration_seconds": summary.get("duration_seconds") or 0,
+        "transcript_word_count": 0,
+        "average_wpm": summary.get("average_wpm") or 0,
+        "wpm_by_chunk": [],
+        "pacing_drift": {
+            "average_wpm": summary.get("average_wpm") or 0,
+            "target_band": [120, 170],
+            "too_fast_chunks": 0,
+            "too_slow_chunks": 0,
+            "trend": "mixed",
+        },
+        "filler_word_count": summary.get("filler_word_count") or 0,
+        "filler_word_breakdown": summary.get("filler_word_breakdown") or {},
+        "repetition": {
+            "top_repeated_words": [],
+            "top_repeated_phrases": [],
+        },
+        "emotion_flags": {
+            "emotional_flatness": {"triggered": False},
+            "nervousness_persistence": {"triggered": False},
+        },
+        "chunk_health": {
+            "total_chunks": 0,
+            "done_chunks": 0,
+            "timed_out_chunks": 0,
+            "failed_chunks": 0,
+        },
+        "overall_score": summary.get("overall_score") or 0,
+        "strengths": summary.get("strengths") or [],
+        "improvement_areas": summary.get("improvement_areas") or [],
+    }
+
+>>>>>>> origin/master
 
 def _to_replay_session(session: dict) -> dict[str, object]:
     return {
@@ -413,6 +518,28 @@ async def get_phase_a_summary(session_id: str) -> SessionSummaryResponse:
         return get_session_manager().get_summary(session_id)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/phase-a/tts")
+async def synthesize_phase_a_tts(payload: dict[str, object]) -> Response:
+    """Synthesize optional Phase A playback without blocking the session graph."""
+
+    from backend.shared.ai import get_ai_service
+    from backend.sprint.phase_b.elevenlabs import synthesize_tts_audio
+
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required for Phase A playback.")
+
+    try:
+        audio = await synthesize_tts_audio(
+            ai_service=get_ai_service(),
+            text=text,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Phase A playback failed: {error}") from error
+
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @app.get("/api/phase-a/sessions/{session_id}/rounds/{round_index}/{media_kind}")
@@ -685,6 +812,124 @@ async def _run_phase_a_graph(session_id: str, initial_state: dict) -> None:
         )
 
 
+async def _run_phase_b_next_turn(
+    session_id: str,
+    request: NextTurnRequest | None = None,
+) -> dict[str, str]:
+    """Generate the next peer turn and optionally speak it over the websocket."""
+
+    try:
+        state = get_phase_b_manager().get_state(session_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    if state["status"] != "active":
+        raise HTTPException(status_code=409, detail="Session is not active.")
+    if state["turn_index"] >= state["max_turns"]:
+        raise HTTPException(status_code=409, detail="All turns have been completed.")
+    if get_phase_b_manager().has_active_turn(session_id):
+        raise HTTPException(status_code=409, detail="Finish the active turn before requesting the next one.")
+
+    if request is not None:
+        get_phase_b_manager().set_voice_id(session_id, request.voice_id)
+        state = get_phase_b_manager().get_state(session_id)
+
+    result = await prompt_graph.ainvoke(
+        state,
+        config={"configurable": {"session_id": session_id}},
+    )
+
+    updated = get_phase_b_manager().get_state(session_id)
+    if updated["status"] != "active":
+        return {"status": "session_complete"}
+    if updated.get("current_turn") is None:
+        detail = "Could not generate the next peer turn."
+        if isinstance(result, dict) and result.get("error"):
+            detail = str(result["error"])
+        raise HTTPException(status_code=500, detail=detail)
+
+    should_speak_peer_message = True if request is None else bool(request.speak_peer_message)
+    if should_speak_peer_message:
+        await stream_peer_tts(session_id)
+
+    refreshed = get_phase_b_manager().get_state(session_id)
+    if refreshed["status"] != "active":
+        return {"status": "session_complete"}
+    if refreshed.get("current_turn") is None:
+        raise HTTPException(status_code=409, detail="The active turn ended before recording could begin.")
+
+    await get_phase_b_manager().send_event(
+        session_id,
+        "recording_ready",
+        {"max_seconds": PHASE_B_MAX_SECONDS, "turn_index": refreshed["turn_index"]},
+    )
+
+    return {"status": "prompt_sent"}
+
+
+def _queue_phase_b_next_turn(
+    session_id: str,
+    *,
+    voice_id: str | None = None,
+    speak_peer_message: bool = True,
+) -> bool:
+    """Schedule the next peer turn in the background when the session is ready."""
+
+    manager = get_phase_b_manager()
+    try:
+        if not manager.is_active(session_id):
+            return False
+        if manager.has_active_turn(session_id):
+            return False
+        if manager.has_pending_next_turn(session_id):
+            return False
+    except RuntimeError:
+        return False
+
+    request = NextTurnRequest(
+        voice_id=voice_id,
+        speak_peer_message=speak_peer_message,
+    )
+    task = asyncio.create_task(_run_phase_b_next_turn(session_id, request=request))
+    manager.set_next_turn_task(session_id, task)
+    task.add_done_callback(
+        lambda completed_task, sid=session_id: _finalize_phase_b_next_turn_task(sid, completed_task)
+    )
+    return True
+
+
+def _finalize_phase_b_next_turn_task(session_id: str, task: asyncio.Task[dict[str, str]]) -> None:
+    manager = get_phase_b_manager()
+    try:
+        manager.clear_next_turn_task(session_id, task)
+    except RuntimeError:
+        return
+
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as error:
+        try:
+            if not manager.is_active(session_id):
+                return
+        except RuntimeError:
+            return
+
+        message = getattr(error, "detail", None) or str(error) or "Could not generate the next peer turn."
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(
+            manager.send_event(
+                session_id,
+                "error",
+                {"message": str(message)},
+            )
+        )
+
+
 # ======================================================================
 # Phase B — Long-form AI Conversation
 # ======================================================================
@@ -694,10 +939,16 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
     """Create a new Phase B conversation session."""
 
     session = get_phase_b_manager().create_session(
+        practice_prompt=request.practice_prompt,
         scenario_preference=request.scenario_preference,
         voice_id=request.voice_id,
         max_turns=request.max_turns,
         minimum_turns=request.minimum_turns,
+    )
+    _queue_phase_b_next_turn(
+        session.session_id,
+        voice_id=request.voice_id,
+        speak_peer_message=True,
     )
     return StartConversationResponse(session_id=session.session_id)
 
@@ -713,6 +964,7 @@ async def get_phase_b_session(session_id: str) -> SessionStateResponse:
 
     return SessionStateResponse(
         session_id=state["session_id"],
+        practice_prompt=state.get("practice_prompt"),
         scenario=state["scenario"],
         scenario_preference=state.get("scenario_preference"),
         voice_id=state.get("voice_id"),
@@ -757,36 +1009,12 @@ async def phase_b_next_turn(
     """
 
     try:
-        state = get_phase_b_manager().get_state(session_id)
+        if get_phase_b_manager().has_pending_next_turn(session_id):
+            raise HTTPException(status_code=409, detail="Already preparing the next peer turn.")
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
-    if state["status"] != "active":
-        raise HTTPException(status_code=409, detail="Session is not active.")
-    if state["turn_index"] >= state["max_turns"]:
-        raise HTTPException(status_code=409, detail="All turns have been completed.")
-    if get_phase_b_manager().has_active_turn(session_id):
-        raise HTTPException(status_code=409, detail="Finish the active turn before requesting the next one.")
-
-    if request is not None:
-        get_phase_b_manager().set_voice_id(session_id, request.voice_id)
-        state = get_phase_b_manager().get_state(session_id)
-
-    await prompt_graph.ainvoke(
-        state,
-        config={"configurable": {"session_id": session_id}},
-    )
-
-    updated = get_phase_b_manager().get_state(session_id)
-    await stream_peer_tts(session_id)
-
-    await get_phase_b_manager().send_event(
-        session_id,
-        "recording_ready",
-        {"max_seconds": PHASE_B_MAX_SECONDS, "turn_index": updated["turn_index"]},
-    )
-
-    return {"status": "prompt_sent"}
+    return await _run_phase_b_next_turn(session_id, request=request)
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/{turn_index}/chunks")
@@ -856,16 +1084,12 @@ async def phase_b_upload_chunk(
         "mediapipe_metrics": mp_metrics,
         "video_emotions": None,
         "audio_emotions": None,
-        "status": "pending",
+        "text_emotions": None,
+        "status": "done",
         "video_upload": video_upload,
         "audio_upload": audio_upload,
     }
     get_phase_b_manager().add_chunk(session_id, chunk_record)
-
-    # Launch background Imentiv processing
-    asyncio.create_task(
-        _process_phase_b_chunk(session_id, turn_index, chunk_index, video_upload, audio_upload)
-    )
 
     return {"status": "accepted", "chunk_index": str(chunk_index)}
 
@@ -914,7 +1138,7 @@ async def phase_b_transcribe(
             audio_source=transcript_audio_upload,
         )
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"Transcription failed: {error}") from error
+        raise _elevenlabs_transcription_http_error(error) from error
 
     get_phase_b_manager().store_transcript(session_id, turn_index, transcript, words)
 
@@ -922,7 +1146,11 @@ async def phase_b_transcribe(
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/{turn_index}/complete")
-async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, object]:
+async def phase_b_complete_turn(
+    session_id: str,
+    turn_index: int,
+    request: NextTurnRequest | None = None,
+) -> dict[str, object]:
     """Run the critique pipeline after recording + chunks + STT are done.
 
     Executes: collect_chunks → merge_summary → judge_response → speak_critique
@@ -960,6 +1188,8 @@ async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, o
         recording_window["recording_end_ms"],
     )
 
+    await _process_phase_b_turn_audio(session_id, turn_index)
+
     await critique_graph.ainvoke(
         state,
         config={"configurable": {"session_id": session_id}},
@@ -978,16 +1208,27 @@ async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, o
         return {
             "status": "session_complete",
             "continue_conversation": False,
+            "completed_turn": _public_phase_b_turn(session_id, completed_turn),
             "turn_analysis": completed_turn.get("turn_analysis"),
             "momentum_reason": momentum.get("reason"),
             "final_report": final_state.get("final_report"),
+            "session_status": final_state["status"],
         }
+
+    queued_next_turn = _queue_phase_b_next_turn(
+        session_id,
+        voice_id=request.voice_id if request is not None else state.get("voice_id"),
+        speak_peer_message=True if request is None else bool(request.speak_peer_message),
+    )
 
     return {
         "status": "turn_complete",
         "continue_conversation": True,
+        "completed_turn": _public_phase_b_turn(session_id, completed_turn),
         "turn_analysis": completed_turn.get("turn_analysis"),
         "momentum_reason": momentum.get("reason"),
+        "next_turn_status": "queued" if queued_next_turn else "idle",
+        "session_status": get_phase_b_manager().get_state(session_id)["status"],
     }
 
 
@@ -996,7 +1237,9 @@ async def phase_b_end_session(session_id: str) -> dict[str, object]:
     """Finalize the session and return summary."""
 
     try:
-        state = get_phase_b_manager().get_state(session_id)
+        manager = get_phase_b_manager()
+        manager.begin_session_shutdown(session_id)
+        state = manager.get_state(session_id)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -1039,6 +1282,39 @@ async def download_phase_b_transcript_audio(session_id: str, turn_index: int) ->
     return await _build_media_response(media_ref)
 
 
+async def _process_phase_b_turn_audio(
+    session_id: str,
+    turn_index: int,
+) -> None:
+    """Analyze the full-turn transcript audio using audio tone + transcript emotion signals."""
+
+    from backend.shared.ai import get_settings
+    from backend.sprint.phase_b.imentiv import analyze_audio
+
+    manager = get_phase_b_manager()
+    settings = get_settings()
+    turn = manager.get_turn(session_id, turn_index)
+    audio_upload = turn.get("transcript_audio_upload")
+    if not isinstance(audio_upload, dict):
+        manager.store_imentiv_analysis(session_id, turn_index, None)
+        return
+
+    try:
+        analysis = await analyze_audio(
+            settings,
+            audio_upload,
+            title=f"phase-b-{session_id}-turn-{turn_index}",
+            description="Phase B conversation turn tone and transcript analysis.",
+        )
+        manager.store_imentiv_analysis(session_id, turn_index, analysis)
+    except Exception as error:
+        manager.store_imentiv_analysis(
+            session_id,
+            turn_index,
+            {"status": "failed", "error": str(error), "video_emotions": [], "audio_emotions": [], "text_emotions": []},
+        )
+
+
 async def _process_phase_b_chunk(
     session_id: str,
     turn_index: int,
@@ -1046,31 +1322,9 @@ async def _process_phase_b_chunk(
     video_upload: dict[str, object],
     audio_upload: dict[str, object],
 ) -> None:
-    """Background task: upload to Imentiv, poll for results, update chunk."""
+    """Deprecated compatibility shim for tests and older code paths."""
 
-    from backend.shared.ai import get_settings
-    from backend.sprint.phase_b.imentiv import analyze_video
-
-    manager = get_phase_b_manager()
-    settings = get_settings()
-
-    try:
-        manager.update_chunk(session_id, turn_index, chunk_index, {"status": "processing"})
-        analysis = await analyze_video(
-            settings,
-            video_upload,
-            title=f"phase-b-{session_id}-turn-{turn_index}-chunk-{chunk_index}",
-            description="Phase B conversation chunk analysis.",
-        )
-
-        manager.update_chunk(session_id, turn_index, chunk_index, {
-            "imentiv_analysis": analysis,
-            "video_emotions": analysis.get("video_emotions") if isinstance(analysis.get("video_emotions"), list) else [],
-            "audio_emotions": analysis.get("audio_emotions") if isinstance(analysis.get("audio_emotions"), list) else [],
-            "status": "done",
-        })
-    except Exception as error:
-        manager.update_chunk(session_id, turn_index, chunk_index, {"status": "failed", "error": str(error)})
+    return None
 
 
 async def _soft_result(awaitable):
@@ -1231,7 +1485,10 @@ async def phase_c_transcribe(session_id: str, audio_file: UploadFile = File(...)
     if not file_id:
         raise HTTPException(status_code=500, detail="Transcript audio file identifier was missing.")
     async with get_media_store().materialize_temp_file(file_id=str(file_id), suffix=".webm") as audio_path:
-        transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+        try:
+            transcript, words = await transcribe_audio(ai_service=get_ai_service(), audio_path=audio_path)
+        except Exception as error:
+            raise _elevenlabs_transcription_http_error(error) from error
     get_phase_c_manager().store_transcript(session_id, transcript, words)
     return {"transcript": transcript, "word_count": len(words)}
 

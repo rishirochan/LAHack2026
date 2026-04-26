@@ -70,6 +70,7 @@ class RoundSummary(BaseModel):
     match_score: float
     filler_words_found: list[str]
     filler_word_count: int
+    filler_word_breakdown: dict[str, int] = Field(default_factory=dict)
     derived_metrics: dict[str, Any] = Field(default_factory=dict)
     display_metrics: list[DisplayMetric] = Field(default_factory=list)
 

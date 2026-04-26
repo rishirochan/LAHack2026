@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from elevenlabs.core.api_error import ApiError
 from fastapi.testclient import TestClient
 
 import backend.sprint.api as sprint_api
@@ -114,6 +115,33 @@ class PhaseCApiTests(unittest.TestCase):
         self.assertIsNotNone(recording)
         self.assertEqual(recording["transcript"], "A concise update.")
         self.assertEqual(recording["transcript_audio_upload"]["storage_key"], f"phase_c/{self.session.session_id}/transcript_audio.webm")
+
+    def test_transcribe_returns_actionable_error_for_missing_speech_to_text_permission(self) -> None:
+        with patch(
+            "backend.sprint.phase_c.elevenlabs.transcribe_audio",
+            new=AsyncMock(
+                side_effect=ApiError(
+                    status_code=401,
+                    body={
+                        "detail": {
+                            "status": "missing_permissions",
+                            "message": "The API key you used is missing the permission speech_to_text to execute this operation.",
+                        }
+                    },
+                )
+            ),
+        ):
+            response = self.client.post(
+                self._transcribe_url(),
+                files={"audio_file": _file_payload("audio.webm", b"audio-bytes", "audio/webm")},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "Speech transcription is unavailable because the configured ElevenLabs API key does not include the "
+            "speech_to_text permission. Update ELEVENLABS_API_KEY to a key with Speech-to-Text access.",
+        )
 
     def test_complete_rejects_no_chunks(self) -> None:
         graph_mock = AsyncMock(return_value={})
