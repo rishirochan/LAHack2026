@@ -31,7 +31,14 @@ from backend.sprint.phase_b.schemas import (
     StartConversationRequest,
     StartConversationResponse,
 )
-from backend.sprint.phase_b.graph import critique_graph, decide_momentum, end_graph, prompt_graph, stream_peer_tts
+from backend.sprint.phase_b.graph import (
+    build_fallback_turn_analysis,
+    critique_graph,
+    decide_momentum,
+    end_graph,
+    prompt_graph,
+    stream_peer_tts,
+)
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 from backend.sprint.phase_c.constants import (
     PHASE_C_MAX_SECONDS,
@@ -927,6 +934,132 @@ def _finalize_phase_b_next_turn_task(session_id: str, task: asyncio.Task[dict[st
         )
 
 
+def _queue_phase_b_turn_post_processing(session_id: str, turn_index: int) -> bool:
+    """Schedule analysis for a completed turn without blocking the next prompt."""
+
+    manager = get_phase_b_manager()
+    try:
+        existing_task = manager.get_turn_post_processing_task(session_id, turn_index)
+    except RuntimeError:
+        return False
+
+    if existing_task is not None and not existing_task.done():
+        return False
+
+    task = asyncio.create_task(_run_phase_b_turn_post_processing(session_id, turn_index))
+    manager.set_turn_post_processing_task(session_id, turn_index, task)
+    task.add_done_callback(
+        lambda completed_task, sid=session_id, idx=turn_index: _finalize_phase_b_turn_post_processing_task(
+            sid,
+            idx,
+            completed_task,
+        )
+    )
+    return True
+
+
+async def _run_phase_b_turn_post_processing(session_id: str, turn_index: int) -> None:
+    """Run tone analysis, critique synthesis, and momentum scoring for one archived turn."""
+
+    try:
+        await _process_phase_b_turn_audio(session_id, turn_index)
+        state = get_phase_b_manager().get_state(session_id)
+        await critique_graph.ainvoke(
+            state,
+            config={"configurable": {"session_id": session_id, "turn_index": turn_index}},
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        _store_phase_b_fallback_analysis(session_id, turn_index, str(error))
+
+    await decide_momentum(session_id, turn_index=turn_index)
+
+
+def _finalize_phase_b_turn_post_processing_task(
+    session_id: str,
+    turn_index: int,
+    task: asyncio.Task[None],
+) -> None:
+    manager = get_phase_b_manager()
+    try:
+        manager.clear_turn_post_processing_task(session_id, turn_index, task)
+    except RuntimeError:
+        return
+
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as error:
+        _store_phase_b_fallback_analysis(session_id, turn_index, str(error))
+
+
+def _store_phase_b_fallback_analysis(session_id: str, turn_index: int, reason: str | None = None) -> None:
+    """Persist a safe fallback analysis when background turn processing fails."""
+
+    manager = get_phase_b_manager()
+    try:
+        turn = manager.get_turn(session_id, turn_index)
+    except RuntimeError:
+        return
+
+    transcript = str(turn.get("transcript") or "").strip()
+    if not transcript:
+        return
+
+    merged_summary = turn.get("merged_summary") or {}
+    status_counts = (merged_summary.get("overall") or {}).get("status_counts") or {}
+    pending_count = int(status_counts.get("pending") or 0) + int(status_counts.get("processing") or 0)
+    analysis_status = "ready" if pending_count == 0 else "partial"
+    fallback = build_fallback_turn_analysis(transcript=transcript, analysis_status=analysis_status)
+
+    manager.store_turn_analysis(
+        session_id,
+        turn_index,
+        merged_summary=merged_summary,
+        turn_analysis=fallback,
+        analysis_status=fallback["analysis_status"],
+    )
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    payload = {"turn_index": turn_index, "turn_analysis": fallback}
+    if reason:
+        payload["fallback_reason"] = reason
+    loop.create_task(manager.send_event(session_id, "turn_analysis_ready", payload))
+
+
+async def _await_phase_b_post_processing_tasks(
+    session_id: str,
+    *,
+    up_to_turn_index: int | None = None,
+) -> None:
+    """Wait for completed-turn background tasks before final reporting."""
+
+    manager = get_phase_b_manager()
+    try:
+        tasks_by_turn = manager.get_turn_post_processing_tasks(session_id)
+    except RuntimeError:
+        return
+
+    pending_tasks: list[asyncio.Task[None]] = []
+    for turn_index, task in sorted(tasks_by_turn.items()):
+        if up_to_turn_index is not None and turn_index > up_to_turn_index:
+            continue
+        if task.done():
+            continue
+        pending_tasks.append(task)
+
+    if not pending_tasks:
+        return
+
+    await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+
 # ======================================================================
 # Phase B — Long-form AI Conversation
 # ======================================================================
@@ -1148,13 +1281,11 @@ async def phase_b_complete_turn(
     turn_index: int,
     request: NextTurnRequest | None = None,
 ) -> dict[str, object]:
-    """Run the critique pipeline after recording + chunks + STT are done.
-
-    Executes: collect_chunks → merge_summary → judge_response → speak_critique
-    """
+    """Commit a finished turn, then continue critique work in the background."""
 
     try:
-        state = get_phase_b_manager().get_state(session_id)
+        manager = get_phase_b_manager()
+        state = manager.get_state(session_id)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -1178,36 +1309,45 @@ async def phase_b_complete_turn(
     if recording_window is None:
         raise HTTPException(status_code=500, detail="Recording window could not be determined.")
 
-    get_phase_b_manager().set_recording_window(
+    transcript = str(current.get("transcript") or "").strip()
+    if not transcript:
+        raise HTTPException(status_code=409, detail="Transcribe the turn before completing it.")
+
+    manager.set_recording_window(
         session_id,
         turn_index,
         recording_window["recording_start_ms"],
         recording_window["recording_end_ms"],
     )
+    completed_turn = manager.finish_turn(session_id, turn_index)
+    _queue_phase_b_turn_post_processing(session_id, turn_index)
 
-    await _process_phase_b_turn_audio(session_id, turn_index)
+    latest_state = manager.get_state(session_id)
+    total_turns = len(latest_state["turns"])
+    momentum = latest_state.get("momentum_decision") or {}
+    should_continue = True
+    momentum_reason = str(momentum.get("reason") or "")
 
-    await critique_graph.ainvoke(
-        state,
-        config={"configurable": {"session_id": session_id}},
-    )
+    if total_turns >= latest_state["max_turns"]:
+        should_continue = False
+        momentum_reason = "Maximum turn count reached, so the exchange should wrap up cleanly."
+    elif not bool(momentum.get("continue_conversation", True)):
+        should_continue = False
 
-    completed_turn = get_phase_b_manager().finish_turn(session_id, turn_index)
-    momentum = await decide_momentum(session_id)
-
-    if not momentum.get("continue_conversation", True):
-        latest_state = get_phase_b_manager().get_state(session_id)
+    if not should_continue:
+        await _await_phase_b_post_processing_tasks(session_id, up_to_turn_index=turn_index)
+        latest_state = manager.get_state(session_id)
         await end_graph.ainvoke(
             latest_state,
             config={"configurable": {"session_id": session_id}},
         )
-        final_state = get_phase_b_manager().get_state(session_id)
+        final_state = manager.get_state(session_id)
         return {
             "status": "session_complete",
             "continue_conversation": False,
-            "completed_turn": _public_phase_b_turn(session_id, completed_turn),
-            "turn_analysis": completed_turn.get("turn_analysis"),
-            "momentum_reason": momentum.get("reason"),
+            "completed_turn": _public_phase_b_turn(session_id, manager.get_turn(session_id, turn_index)),
+            "turn_analysis": manager.get_turn(session_id, turn_index).get("turn_analysis"),
+            "momentum_reason": momentum_reason,
             "final_report": final_state.get("final_report"),
             "session_status": final_state["status"],
         }
@@ -1223,9 +1363,9 @@ async def phase_b_complete_turn(
         "continue_conversation": True,
         "completed_turn": _public_phase_b_turn(session_id, completed_turn),
         "turn_analysis": completed_turn.get("turn_analysis"),
-        "momentum_reason": momentum.get("reason"),
+        "momentum_reason": momentum_reason or None,
         "next_turn_status": "queued" if queued_next_turn else "idle",
-        "session_status": get_phase_b_manager().get_state(session_id)["status"],
+        "session_status": manager.get_state(session_id)["status"],
     }
 
 
@@ -1236,10 +1376,11 @@ async def phase_b_end_session(session_id: str) -> dict[str, object]:
     try:
         manager = get_phase_b_manager()
         manager.begin_session_shutdown(session_id)
-        state = manager.get_state(session_id)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
+    await _await_phase_b_post_processing_tasks(session_id)
+    state = manager.get_state(session_id)
     await end_graph.ainvoke(
         state,
         config={"configurable": {"session_id": session_id}},

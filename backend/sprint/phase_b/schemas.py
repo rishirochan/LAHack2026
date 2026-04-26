@@ -52,6 +52,7 @@ class MomentumDecision(TypedDict):
 
     continue_conversation: bool
     reason: str
+    based_on_turn_index: int
 
 
 class TurnAnalysis(TypedDict):

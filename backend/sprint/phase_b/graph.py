@@ -24,7 +24,7 @@ from backend.sprint.phase_b.prompts import (
     build_setup_user,
     build_turn_analysis_user,
 )
-from backend.sprint.phase_b.schemas import PhaseBState, TurnAnalysis
+from backend.sprint.phase_b.schemas import PhaseBState, TurnAnalysis, TurnState
 from backend.sprint.phase_b.session_manager import get_phase_b_manager
 
 
@@ -106,16 +106,16 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
     session_id = _session_id(config)
     manager = get_phase_b_manager()
     session_state = manager.get_state(session_id)
-    current_turn = session_state.get("current_turn")
+    target_turn = _target_turn(session_id, config)
+    if target_turn is None:
+        return {"error": "No completed turn was available for merge_summary."}
 
-    if current_turn is None:
-        return {"error": "No active turn for merge_summary."}
+    if _should_emit_processing_stage(session_state, target_turn["turn_index"]):
+        await _send_event(config, "processing_stage", {"stage": "Preparing turn analysis"})
 
-    await _send_event(config, "processing_stage", {"stage": "Preparing turn analysis"})
-
-    words = current_turn.get("transcript_words") or []
-    chunks = current_turn["chunks"]
-    imentiv_analysis = current_turn.get("imentiv_analysis") or {}
+    words = target_turn.get("transcript_words") or []
+    chunks = target_turn["chunks"]
+    imentiv_analysis = target_turn.get("imentiv_analysis") or {}
     transcript_segments = _transcript_segments(imentiv_analysis)
     overall_audio = _dominant_emotion(imentiv_analysis.get("audio_emotions") or [])
     overall_text = _dominant_emotion(imentiv_analysis.get("text_emotions") or [])
@@ -157,8 +157,8 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
     merged = {
         "peer_profile": session_state.get("peer_profile"),
         "starter_topic": session_state.get("starter_topic"),
-        "question_asked": current_turn.get("prompt_text", ""),
-        "full_transcript": current_turn.get("transcript") or "",
+        "question_asked": target_turn.get("prompt_text", ""),
+        "full_transcript": target_turn.get("transcript") or "",
         "analysis_basis": "audio_and_transcript",
         "transcript_emotion_segments": transcript_segments,
         "transcript_words": [
@@ -187,7 +187,7 @@ async def merge_summary(state: PhaseBState, config: RunnableConfig) -> dict[str,
             "analysis_ready": bool(imentiv_analysis) and str(imentiv_analysis.get("status") or "").lower() != "failed",
         },
     }
-    current_turn["merged_summary"] = merged
+    target_turn["merged_summary"] = merged
     manager.persist_state(session_id)
     return {"error": None}
 
@@ -198,28 +198,28 @@ async def analyze_turn(state: PhaseBState, config: RunnableConfig) -> dict[str, 
     session_id = _session_id(config)
     manager = get_phase_b_manager()
     session_state = manager.get_state(session_id)
-    current_turn = session_state.get("current_turn")
+    target_turn = _target_turn(session_id, config)
+    if target_turn is None:
+        return {"error": "No completed turn was available for analyze_turn."}
 
-    if current_turn is None:
-        return {"error": "No active turn for analyze_turn."}
-
-    merged = current_turn.get("merged_summary") or {}
-    transcript = (current_turn.get("transcript") or "").strip()
+    merged = target_turn.get("merged_summary") or {}
+    transcript = (target_turn.get("transcript") or "").strip()
     if not transcript:
         return {"error": "Transcript was empty for this turn."}
 
-    await _send_event(config, "processing_stage", {"stage": "Scoring the turn"})
+    if _should_emit_processing_stage(session_state, target_turn["turn_index"]):
+        await _send_event(config, "processing_stage", {"stage": "Scoring the turn"})
 
     status_counts = (merged.get("overall") or {}).get("status_counts") or {}
     pending_count = int(status_counts.get("pending") or 0) + int(status_counts.get("processing") or 0)
     analysis_status = "ready" if pending_count == 0 else "partial"
-    fallback = _fallback_turn_analysis(transcript=transcript, analysis_status=analysis_status)
+    fallback = build_fallback_turn_analysis(transcript=transcript, analysis_status=analysis_status)
 
     try:
         turn_analysis = await _generate_json(
             system_prompt=TURN_ANALYSIS_SYSTEM_PROMPT,
             user_prompt=build_turn_analysis_user(
-                peer_message=current_turn.get("prompt_text") or "",
+                peer_message=target_turn.get("prompt_text") or "",
                 user_transcript=transcript,
                 merged_summary_json=json.dumps(merged, ensure_ascii=True),
             ),
@@ -233,7 +233,7 @@ async def analyze_turn(state: PhaseBState, config: RunnableConfig) -> dict[str, 
     normalized = _coerce_turn_analysis(turn_analysis, analysis_status=analysis_status, fallback=fallback)
     manager.store_turn_analysis(
         session_id,
-        current_turn["turn_index"],
+        target_turn["turn_index"],
         merged_summary=merged,
         turn_analysis=normalized,
         analysis_status=normalized["analysis_status"],
@@ -241,25 +241,44 @@ async def analyze_turn(state: PhaseBState, config: RunnableConfig) -> dict[str, 
     await _send_event(
         config,
         "turn_analysis_ready",
-        {"turn_index": current_turn["turn_index"], "turn_analysis": normalized},
+        {"turn_index": target_turn["turn_index"], "turn_analysis": normalized},
     )
     return {"error": None}
 
 
-async def decide_momentum(session_id: str) -> dict[str, Any]:
+async def decide_momentum(session_id: str, *, turn_index: int | None = None) -> dict[str, Any]:
     """Judge whether the conversation still has natural momentum."""
 
     manager = get_phase_b_manager()
     state = manager.get_state(session_id)
-    if len(state["turns"]) < state["minimum_turns"]:
-        decision = {"continue_conversation": True, "reason": "Minimum turn count not reached yet."}
+    turns = state["turns"]
+    if not turns:
+        decision = {
+            "continue_conversation": True,
+            "reason": "Minimum turn count not reached yet.",
+            "based_on_turn_index": -1,
+        }
         manager.store_momentum_decision(session_id, decision)
         return decision
 
-    if len(state["turns"]) >= state["max_turns"]:
+    target_turn_index = int(turns[-1]["turn_index"] if turn_index is None else turn_index)
+    target_turn = manager.get_turn(session_id, target_turn_index)
+    completed_turn_count = target_turn_index + 1
+
+    if completed_turn_count < state["minimum_turns"]:
+        decision = {
+            "continue_conversation": True,
+            "reason": "Minimum turn count not reached yet.",
+            "based_on_turn_index": target_turn_index,
+        }
+        manager.store_momentum_decision(session_id, decision)
+        return decision
+
+    if completed_turn_count >= state["max_turns"]:
         decision = {
             "continue_conversation": False,
             "reason": "Maximum turn count reached, so the exchange should wrap up cleanly.",
+            "based_on_turn_index": target_turn_index,
         }
         manager.store_momentum_decision(session_id, decision)
         return decision
@@ -267,15 +286,16 @@ async def decide_momentum(session_id: str) -> dict[str, Any]:
     fallback = {
         "continue_conversation": True,
         "reason": "The conversation still sounds active and unfinished.",
+        "based_on_turn_index": target_turn_index,
     }
-    latest_turn_analysis = state["turns"][-1].get("turn_analysis")
+    latest_turn_analysis = target_turn.get("turn_analysis")
     try:
         decision = await _generate_json(
             system_prompt=MOMENTUM_SYSTEM_PROMPT,
             user_prompt=build_momentum_user(
                 peer_profile=state.get("peer_profile"),
                 starter_topic=state.get("starter_topic"),
-                conversation_history=state["conversation_history"],
+                conversation_history=_conversation_history_through_turn(state, target_turn_index),
                 latest_turn_analysis=latest_turn_analysis,
                 minimum_turns=state["minimum_turns"],
             ),
@@ -289,6 +309,7 @@ async def decide_momentum(session_id: str) -> dict[str, Any]:
     normalized = {
         "continue_conversation": bool(decision.get("continue_conversation", True)),
         "reason": str(decision.get("reason") or fallback["reason"]),
+        "based_on_turn_index": target_turn_index,
     }
     manager.store_momentum_decision(session_id, normalized)
     return normalized
@@ -412,6 +433,32 @@ def _session_id(config: RunnableConfig) -> str:
 
 def _route_error(state: PhaseBState) -> str:
     return "error" if state.get("error") else "ok"
+
+
+def _target_turn(session_id: str, config: RunnableConfig) -> TurnState | None:
+    manager = get_phase_b_manager()
+    configurable = (config or {}).get("configurable", {})
+    raw_turn_index = configurable.get("turn_index")
+    if raw_turn_index is None:
+        current_turn = manager.get_state(session_id).get("current_turn")
+        return current_turn if isinstance(current_turn, dict) else None
+    return manager.get_turn(session_id, int(raw_turn_index))
+
+
+def _should_emit_processing_stage(session_state: PhaseBState, turn_index: int) -> bool:
+    current_turn = session_state.get("current_turn")
+    return isinstance(current_turn, dict) and int(current_turn.get("turn_index") or -1) == turn_index
+
+
+def _conversation_history_through_turn(state: PhaseBState, turn_index: int) -> list[dict[str, str]]:
+    history: list[dict[str, str]] = []
+    for turn in state["turns"]:
+        current_turn_index = int(turn.get("turn_index") or -1)
+        if current_turn_index > turn_index:
+            break
+        history.append({"role": "assistant", "content": str(turn.get("prompt_text") or "")})
+        history.append({"role": "user", "content": str(turn.get("transcript") or "")})
+    return history
 
 
 async def _generate_json(
@@ -553,6 +600,10 @@ def _fallback_turn_analysis(*, transcript: str, analysis_status: str) -> TurnAna
             "End with a thought or question that keeps the conversation easy to continue.",
         ],
     }
+
+
+def build_fallback_turn_analysis(*, transcript: str, analysis_status: str) -> TurnAnalysis:
+    return _fallback_turn_analysis(transcript=transcript, analysis_status=analysis_status)
 
 
 def _coerce_turn_analysis(value: Any, *, analysis_status: str, fallback: TurnAnalysis) -> TurnAnalysis:

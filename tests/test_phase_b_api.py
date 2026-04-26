@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -36,7 +37,15 @@ class PhaseBApiTests(unittest.TestCase):
     def _transcribe_url(self) -> str:
         return f"/api/phase-b/sessions/{self.session.session_id}/turns/0/transcribe"
 
-    def _post_chunk(self, *, chunk_index: int, start_ms: int, end_ms: int, video_data: bytes = b"video", audio_data: bytes = b"audio"):
+    def _post_chunk(
+        self,
+        *,
+        chunk_index: int,
+        start_ms: int,
+        end_ms: int,
+        video_data: bytes = b"video",
+        audio_data: bytes = b"audio",
+    ):
         with patch("backend.sprint.api._process_phase_b_chunk", new=AsyncMock(return_value=None)):
             return self.client.post(
                 self._chunk_url(),
@@ -51,6 +60,21 @@ class PhaseBApiTests(unittest.TestCase):
                     "audio_file": _file_payload("audio.webm", audio_data, "audio/webm"),
                 },
             )
+
+    def _add_valid_turn_inputs(self) -> None:
+        self.manager.add_chunk(
+            self.session.session_id,
+            {
+                "chunk_index": 0,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "mediapipe_metrics": {},
+                "video_emotions": [],
+                "audio_emotions": [],
+                "status": "done",
+            },
+        )
+        self.manager.store_transcript(self.session.session_id, 0, "hello there", [])
 
     def test_chunk_upload_rejects_invalid_time_range(self) -> None:
         response = self._post_chunk(chunk_index=0, start_ms=5000, end_ms=5000)
@@ -177,19 +201,13 @@ class PhaseBApiTests(unittest.TestCase):
         self.assertIn("Practice prompt must be 60 words or fewer.", str(response.json()["detail"]))
 
     def test_complete_rejects_turn_with_no_chunks(self) -> None:
-        critique_mock = AsyncMock(return_value={})
-        with (
-            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
-            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True),
-        ):
-            response = self.client.post(self._complete_url())
+        response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(
             response.json()["detail"],
             "The recording was empty. Check camera and microphone access.",
         )
-        critique_mock.assert_not_awaited()
 
     def test_complete_rejects_short_recording(self) -> None:
         self.manager.add_chunk(
@@ -205,19 +223,13 @@ class PhaseBApiTests(unittest.TestCase):
             },
         )
 
-        critique_mock = AsyncMock(return_value={})
-        with (
-            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
-            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True),
-        ):
-            response = self.client.post(self._complete_url())
+        response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(
             response.json()["detail"],
             "That recording was too short. Try again with a full response.",
         )
-        critique_mock.assert_not_awaited()
 
     def test_complete_rejects_long_recording(self) -> None:
         self.manager.add_chunk(
@@ -233,13 +245,10 @@ class PhaseBApiTests(unittest.TestCase):
             },
         )
 
-        critique_mock = AsyncMock(return_value={})
-        with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
-            response = self.client.post(self._complete_url())
+        response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "That response ran too long. Keep it under 45 seconds.")
-        critique_mock.assert_not_awaited()
 
     def test_complete_rejects_gap_between_chunks(self) -> None:
         self.manager.add_chunk(
@@ -267,16 +276,13 @@ class PhaseBApiTests(unittest.TestCase):
             },
         )
 
-        critique_mock = AsyncMock(return_value={})
-        with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
-            response = self.client.post(self._complete_url())
+        response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(
             response.json()["detail"],
             "Some recording chunks were missing or overlapped. Please record that turn again.",
         )
-        critique_mock.assert_not_awaited()
 
     def test_complete_rejects_overlapping_chunks(self) -> None:
         self.manager.add_chunk(
@@ -304,18 +310,34 @@ class PhaseBApiTests(unittest.TestCase):
             },
         )
 
-        critique_mock = AsyncMock(return_value={})
-        with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
-            response = self.client.post(self._complete_url())
+        response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(
             response.json()["detail"],
             "Some recording chunks were missing or overlapped. Please record that turn again.",
         )
-        critique_mock.assert_not_awaited()
 
-    def test_complete_accepts_out_of_order_contiguous_chunks_and_persists_window(self) -> None:
+    def test_complete_requires_transcript_before_finishing_turn(self) -> None:
+        self.manager.add_chunk(
+            self.session.session_id,
+            {
+                "chunk_index": 0,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "mediapipe_metrics": {},
+                "video_emotions": [],
+                "audio_emotions": [],
+                "status": "done",
+            },
+        )
+
+        response = self.client.post(self._complete_url())
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "Transcribe the turn before completing it.")
+
+    def test_complete_queues_background_processing_and_next_turn_without_waiting_for_critique(self) -> None:
         self.manager.add_chunk(
             self.session.session_id,
             {
@@ -343,20 +365,129 @@ class PhaseBApiTests(unittest.TestCase):
         self.manager.store_transcript(self.session.session_id, 0, "hello there", [])
 
         critique_mock = AsyncMock(return_value={})
-        with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
+        with (
+            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
+            patch("backend.sprint.api._queue_phase_b_turn_post_processing", return_value=True) as post_processing_mock,
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True) as next_turn_mock,
+        ):
             response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "turn_complete")
         self.assertTrue(response.json()["continue_conversation"])
-        critique_mock.assert_awaited_once()
+        self.assertEqual(response.json()["completed_turn"]["analysis_status"], "pending")
+        self.assertIsNone(response.json()["completed_turn"]["turn_analysis"])
+        post_processing_mock.assert_called_once_with(self.session.session_id, 0)
+        next_turn_mock.assert_called_once()
+        critique_mock.assert_not_awaited()
         state = self.manager.get_state(self.session.session_id)
         finished_turn = state["turns"][0]
         self.assertEqual(finished_turn["recording_start_ms"], 0)
         self.assertEqual(finished_turn["recording_end_ms"], 10000)
         self.assertEqual(state["turn_index"], 1)
 
-    def test_complete_uses_transcript_audio_upload_for_tone_analysis(self) -> None:
+    def test_complete_preserves_text_only_setting_for_next_turn_queue(self) -> None:
+        self._add_valid_turn_inputs()
+
+        with (
+            patch("backend.sprint.api._queue_phase_b_turn_post_processing", return_value=True),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True) as next_turn_mock,
+        ):
+            response = self.client.post(
+                self._complete_url(),
+                json={"voice_id": "voice-42", "speak_peer_message": False},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "turn_complete")
+        next_turn_mock.assert_called_once_with(
+            self.session.session_id,
+            voice_id="voice-42",
+            speak_peer_message=False,
+        )
+
+    def test_get_session_preserves_pending_archived_turns_during_refresh(self) -> None:
+        self._add_valid_turn_inputs()
+
+        with (
+            patch("backend.sprint.api._queue_phase_b_turn_post_processing", return_value=True),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=False),
+        ):
+            complete_response = self.client.post(self._complete_url())
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.manager.start_turn(self.session.session_id, "Tell me more about that.")
+
+        response = self.client.get(f"/api/phase-b/sessions/{self.session.session_id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["turns"][0]["analysis_status"], "pending")
+        self.assertIsNone(payload["turns"][0]["turn_analysis"])
+        self.assertEqual(payload["current_turn"]["turn_index"], 1)
+        self.assertEqual(payload["current_turn"]["prompt_text"], "Tell me more about that.")
+
+    def test_complete_stops_at_max_turns_and_waits_for_background_processing(self) -> None:
+        self.manager.get_state(self.session.session_id)["max_turns"] = 1
+        self._add_valid_turn_inputs()
+
+        wait_mock = AsyncMock(return_value=None)
+        with (
+            patch("backend.sprint.api._queue_phase_b_turn_post_processing", return_value=True),
+            patch("backend.sprint.api._await_phase_b_post_processing_tasks", wait_mock),
+            patch.object(sprint_api.end_graph, "ainvoke", AsyncMock(return_value={})),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True) as next_turn_mock,
+        ):
+            response = self.client.post(self._complete_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "session_complete")
+        self.assertFalse(response.json()["continue_conversation"])
+        wait_mock.assert_awaited_once_with(self.session.session_id, up_to_turn_index=0)
+        next_turn_mock.assert_not_called()
+
+    def test_complete_uses_stored_momentum_stop_without_queueing_another_prompt(self) -> None:
+        self.manager.store_momentum_decision(
+            self.session.session_id,
+            {
+                "continue_conversation": False,
+                "reason": "The exchange already reached a natural stopping point.",
+                "based_on_turn_index": 0,
+            },
+        )
+        self._add_valid_turn_inputs()
+
+        wait_mock = AsyncMock(return_value=None)
+        with (
+            patch("backend.sprint.api._queue_phase_b_turn_post_processing", return_value=True),
+            patch("backend.sprint.api._await_phase_b_post_processing_tasks", wait_mock),
+            patch.object(sprint_api.end_graph, "ainvoke", AsyncMock(return_value={})),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True) as next_turn_mock,
+        ):
+            response = self.client.post(self._complete_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "session_complete")
+        self.assertFalse(response.json()["continue_conversation"])
+        self.assertEqual(
+            response.json()["momentum_reason"],
+            "The exchange already reached a natural stopping point.",
+        )
+        wait_mock.assert_awaited_once_with(self.session.session_id, up_to_turn_index=0)
+        next_turn_mock.assert_not_called()
+
+    def test_end_session_waits_for_background_processing_tasks(self) -> None:
+        wait_mock = AsyncMock(return_value=None)
+        with (
+            patch("backend.sprint.api._await_phase_b_post_processing_tasks", wait_mock),
+            patch.object(sprint_api.end_graph, "ainvoke", AsyncMock(return_value={})),
+        ):
+            response = self.client.post(f"/api/phase-b/sessions/{self.session.session_id}/end")
+
+        self.assertEqual(response.status_code, 200)
+        wait_mock.assert_awaited_once_with(self.session.session_id)
+
+    def test_background_turn_processing_uses_transcript_audio_upload_for_tone_analysis(self) -> None:
         self.manager.add_chunk(
             self.session.session_id,
             {
@@ -381,8 +512,8 @@ class PhaseBApiTests(unittest.TestCase):
         }
         self.manager.store_transcript_upload(self.session.session_id, 0, transcript_upload)
         self.manager.store_transcript(self.session.session_id, 0, "hello there", [])
+        self.manager.finish_turn(self.session.session_id, 0)
 
-        critique_mock = AsyncMock(return_value={})
         analyze_audio_mock = AsyncMock(
             return_value={
                 "status": "completed",
@@ -392,13 +523,12 @@ class PhaseBApiTests(unittest.TestCase):
             }
         )
         with (
-            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
+            patch.object(sprint_api.critique_graph, "ainvoke", AsyncMock(return_value={})),
+            patch("backend.sprint.api.decide_momentum", AsyncMock(return_value={})),
             patch("backend.sprint.phase_b.imentiv.analyze_audio", analyze_audio_mock),
-            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True),
         ):
-            response = self.client.post(self._complete_url())
+            asyncio.run(sprint_api._run_phase_b_turn_post_processing(self.session.session_id, 0))
 
-        self.assertEqual(response.status_code, 200)
         analyze_audio_mock.assert_awaited_once()
         self.assertEqual(analyze_audio_mock.await_args.args[1], transcript_upload)
         state = self.manager.get_state(self.session.session_id)

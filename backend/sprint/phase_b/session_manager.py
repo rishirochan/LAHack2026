@@ -32,6 +32,7 @@ class ActiveConversation:
     websocket: WebSocket | None = None
     pending_events: list[dict[str, Any]] = field(default_factory=list)
     next_turn_task: Task[Any] | None = None
+    turn_post_processing_tasks: dict[int, Task[Any]] = field(default_factory=dict)
 
 
 class PhaseBSessionManager:
@@ -119,6 +120,36 @@ class PhaseBSessionManager:
         if task is not None and session.next_turn_task is not task:
             return
         session.next_turn_task = None
+
+    def set_turn_post_processing_task(self, session_id: str, turn_index: int, task: Task[Any]) -> None:
+        self.get_session(session_id).turn_post_processing_tasks[turn_index] = task
+
+    def get_turn_post_processing_task(self, session_id: str, turn_index: int) -> Task[Any] | None:
+        return self.get_session(session_id).turn_post_processing_tasks.get(turn_index)
+
+    def get_turn_post_processing_tasks(self, session_id: str) -> dict[int, Task[Any]]:
+        return dict(self.get_session(session_id).turn_post_processing_tasks)
+
+    def clear_turn_post_processing_task(
+        self,
+        session_id: str,
+        turn_index: int,
+        task: Task[Any] | None = None,
+    ) -> None:
+        session = self.get_session(session_id)
+        existing = session.turn_post_processing_tasks.get(turn_index)
+        if existing is None:
+            return
+        if task is not None and existing is not task:
+            return
+        session.turn_post_processing_tasks.pop(turn_index, None)
+
+    def cancel_turn_post_processing_tasks(self, session_id: str) -> None:
+        session = self.get_session(session_id)
+        for task in session.turn_post_processing_tasks.values():
+            if not task.done():
+                task.cancel()
+        session.turn_post_processing_tasks.clear()
 
     # ------------------------------------------------------------------
     # Turn management
@@ -318,6 +349,12 @@ class PhaseBSessionManager:
 
     def store_momentum_decision(self, session_id: str, decision: MomentumDecision | None) -> None:
         state = self.get_state(session_id)
+        existing = state.get("momentum_decision")
+        if existing is not None and decision is not None:
+            existing_turn_index = int(existing.get("based_on_turn_index", -1))
+            incoming_turn_index = int(decision.get("based_on_turn_index", -1))
+            if incoming_turn_index < existing_turn_index:
+                return
         state["momentum_decision"] = decision
         self.persist_state(session_id)
 
