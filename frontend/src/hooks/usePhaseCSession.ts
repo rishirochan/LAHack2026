@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useSessionsContext } from '@/context/SessionsContext';
 import {
@@ -20,6 +20,7 @@ const DEFAULT_WAVEFORM_BARS = Array(32).fill(6);
 
 type PhaseCStatus =
   | 'setup'
+  | 'preparing'
   | 'ready'
   | 'recording'
   | 'uploading'
@@ -56,7 +57,7 @@ export function usePhaseCSession() {
   const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
   const [transcriptPreview, setTranscriptPreview] = useState('');
 
-  const previewRef = useRef<HTMLVideoElement | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const websocketRef = useRef<WebSocket | null>(null);
@@ -84,12 +85,43 @@ export function usePhaseCSession() {
   }, []);
 
   const attachPreviewStream = useCallback((stream: MediaStream | null) => {
-    const preview = previewRef.current;
+    const preview = previewVideoRef.current;
     if (!preview) {
       return;
     }
     preview.srcObject = stream;
+    if (stream) {
+      preview.muted = true;
+      void preview.play().catch(() => {});
+    }
   }, []);
+
+  /** Callback ref: `AnimatePresence mode="wait"` mounts this after exit, often after `getUserMedia` already ran. */
+  const setPreviewVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    previewVideoRef.current = node;
+    const stream = mediaStreamRef.current;
+    if (node && stream) {
+      node.srcObject = stream;
+      node.muted = true;
+      node.playsInline = true;
+      void node.play().catch(() => {});
+    } else if (node) {
+      node.srcObject = null;
+    }
+  }, []);
+
+  /** Preview `<video>` mounts only after status leaves `setup`; re-bind after paint when ref exists. */
+  const bindStreamToPreview = useCallback(
+    (stream: MediaStream | null) => {
+      attachPreviewStream(stream);
+      if (!stream) {
+        return;
+      }
+      queueMicrotask(() => attachPreviewStream(stream));
+      requestAnimationFrame(() => attachPreviewStream(stream));
+    },
+    [attachPreviewStream],
+  );
 
   const clearRecordedVideoUrl = useCallback(() => {
     setRecordedVideoUrl((currentUrl) => {
@@ -200,9 +232,9 @@ export function usePhaseCSession() {
     };
   }, [resetAll]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     attachPreviewStream(mediaStreamRef.current);
-  }, [attachPreviewStream, recordedVideoUrl]);
+  }, [attachPreviewStream, recordedVideoUrl, status]);
 
   const connectWaveform = useCallback((stream: MediaStream) => {
     stopWaveformLoop();
@@ -239,7 +271,7 @@ export function usePhaseCSession() {
 
   const acquireMedia = useCallback(async () => {
     if (mediaStreamRef.current) {
-      attachPreviewStream(mediaStreamRef.current);
+      bindStreamToPreview(mediaStreamRef.current);
       return mediaStreamRef.current;
     }
 
@@ -248,10 +280,10 @@ export function usePhaseCSession() {
       audio: true,
     });
     mediaStreamRef.current = stream;
-    attachPreviewStream(stream);
+    bindStreamToPreview(stream);
     connectWaveform(stream);
     return stream;
-  }, [attachPreviewStream, connectWaveform]);
+  }, [bindStreamToPreview, connectWaveform]);
 
   const waitForSocketOpen = useCallback((socket: WebSocket) => {
     if (socket.readyState === WebSocket.OPEN) {
@@ -456,7 +488,6 @@ export function usePhaseCSession() {
       case 'recording_ready':
         setMaxSeconds(event.payload.max_seconds);
         setStatus('ready');
-        void startLocalRecording(event.payload.max_seconds);
         break;
       case 'processing_stage':
         setStatus('processing');
@@ -482,7 +513,7 @@ export function usePhaseCSession() {
       default:
         break;
     }
-  }, [refreshRecentSessionsAfterCompletion, startLocalRecording]);
+  }, [refreshRecentSessionsAfterCompletion]);
 
   const connectWebsocket = useCallback((nextSessionId: string) => {
     closeWebsocket();
@@ -501,7 +532,7 @@ export function usePhaseCSession() {
 
   const startSession = useCallback(async () => {
     resetPresentationState();
-    setStatus('ready');
+    setStatus('preparing');
 
     try {
       const session = await createSession();
@@ -516,6 +547,59 @@ export function usePhaseCSession() {
       setStatus('error');
     }
   }, [acquireMedia, connectWebsocket, resetPresentationState, waitForSocketOpen]);
+
+  const beginRecording = useCallback(async () => {
+    const limit = maxSeconds;
+    await startLocalRecording(limit);
+  }, [maxSeconds, startLocalRecording]);
+
+  const discardLocalRecordingWithoutUpload = useCallback(async () => {
+    stopTimers();
+    const activeChunk = activeChunkRef.current;
+    activeChunkRef.current = null;
+    if (activeChunk) {
+      await Promise.all([
+        waitForRecorderStop(activeChunk.videoRecorder),
+        waitForRecorderStop(activeChunk.audioRecorder),
+      ]);
+    }
+    await Promise.all([
+      waitForRecorderStop(fullVideoRecorderRef.current),
+      waitForRecorderStop(fullAudioRecorderRef.current),
+    ]);
+    fullVideoRecorderRef.current = null;
+    fullAudioRecorderRef.current = null;
+    fullVideoChunksRef.current = [];
+    fullAudioChunksRef.current = [];
+    setRecordSeconds(0);
+    setChunkUploads([]);
+  }, [stopTimers, waitForRecorderStop]);
+
+  const restartRecording = useCallback(async () => {
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || stopInFlightRef.current) {
+      return;
+    }
+
+    try {
+      await discardLocalRecordingWithoutUpload();
+      setErrorMessage('');
+      setProcessingStage('');
+      setStatus('preparing');
+      await acquireMedia();
+      const socket = connectWebsocket(currentSessionId);
+      await waitForSocketOpen(socket);
+      await startRecordingRequest(currentSessionId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Could not restart the recording.');
+      setStatus('error');
+    }
+  }, [
+    acquireMedia,
+    connectWebsocket,
+    discardLocalRecordingWithoutUpload,
+    waitForSocketOpen,
+  ]);
 
   const stopRecording = useCallback(async () => {
     const currentSessionId = sessionIdRef.current;
@@ -611,8 +695,10 @@ export function usePhaseCSession() {
     chunkUploads,
     recordedVideoUrl,
     transcriptPreview,
-    previewRef,
+    previewRef: setPreviewVideoRef,
     startSession,
+    beginRecording,
+    restartRecording,
     stopRecording,
     retryRecording,
     resetAll,

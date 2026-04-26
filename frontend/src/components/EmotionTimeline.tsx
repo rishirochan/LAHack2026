@@ -76,6 +76,27 @@ export function EmotionTimeline({ chunks, loading = false, errorMessage = '' }: 
   const totalDurationMs = normalizedChunks.reduce((total, chunk) => total + chunk.durationMs, 0);
   const activeChunk = normalizedChunks[activeIndex] ?? normalizedChunks[0] ?? null;
 
+  const visibleLegend = useMemo(() => {
+    const entries: { key: string; emotion: string | null }[] = [];
+    const seen = new Set<string>();
+    for (const chunk of normalizedChunks) {
+      const emotion = chunk.dominantEmotion;
+      const dedupeKey = emotion ?? '__null__';
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      entries.push({
+        key: emotion ?? `no-emotion-${chunk.chunk_index}`,
+        emotion,
+      });
+      if (entries.length >= 6) {
+        break;
+      }
+    }
+    return entries;
+  }, [normalizedChunks]);
+
   if (loading) {
     return (
       <div className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm">
@@ -108,15 +129,6 @@ export function EmotionTimeline({ chunks, loading = false, errorMessage = '' }: 
       </div>
     );
   }
-
-  const visibleLegend = Array.from(
-    new Map(
-      normalizedChunks.map((chunk) => [
-        chunk.dominantEmotion || `unknown-${chunk.chunk_index}`,
-        chunk.dominantEmotion,
-      ]),
-    ).values(),
-  ).slice(0, 6);
 
   return (
     <div className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm">
@@ -177,9 +189,9 @@ export function EmotionTimeline({ chunks, loading = false, errorMessage = '' }: 
       )}
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {visibleLegend.map((emotion) => (
+        {visibleLegend.map(({ key, emotion }) => (
           <div
-            key={emotion ?? 'unknown'}
+            key={key}
             className="inline-flex items-center gap-2 rounded-full bg-cream-50 px-3 py-1.5 text-xs text-slate-600"
           >
             <span className={`h-2.5 w-2.5 rounded-full ${getSegmentColor(emotion)}`} />

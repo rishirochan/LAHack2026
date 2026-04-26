@@ -1049,7 +1049,7 @@ async def _soft_result(awaitable):
 # ======================================================================
 
 @app.post("/api/phase-c/sessions", response_model=StartPhaseCSessionResponse)
-async def start_phase_c_session(request: StartPhaseCSessionRequest) -> StartPhaseCSessionResponse:
+async def start_phase_c_session(_request: StartPhaseCSessionRequest | None = None) -> StartPhaseCSessionResponse:
     session = get_phase_c_manager().create_session()
     return StartPhaseCSessionResponse(session_id=session.session_id)
 

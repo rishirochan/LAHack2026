@@ -137,6 +137,8 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 export function createSession() {
   return json<StartPhaseCSessionResponse>(`${API_URL}/api/phase-c/sessions`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
   });
 }
 
