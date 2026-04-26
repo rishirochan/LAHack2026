@@ -5,7 +5,7 @@ import LoginModal, { type AuthMode } from '@/auth/LoginModal';
 import { useAuth } from '@/auth/AuthProvider';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Sparkles, Zap, MessageSquare, Mic } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 30 },
@@ -16,29 +16,26 @@ const fadeUp = {
   }),
 };
 
-const features = [
+const problemAtHand = [
   {
-    icon: Zap,
-    title: 'Emotion Sprint',
+    label: 'Friends',
+    quote: '“You sound fine.”',
     description:
-      'Pick an emotion, get 2-3 sentences to say in that style. Recording gets analyzed for facial expressions, body language, and vocal tone via computer vision and audio ML. Gemma synthesizes a detailed critique.',
-    image: '/feature-sprint.jpg',
+      'Subjective feedback builds false confidence and teaches nothing.',
   },
   {
-    icon: MessageSquare,
-    title: 'Conversation Modes',
+    label: 'Advice',
+    quote: '“Just be yourself.”',
     description:
-      'Describe the exact conversation you want to emulate, from a Roblox interview tomorrow to a tricky roommate talk. We infer the other person, their style, and the stakes, then run the same video, audio, and transcript analysis pipeline.',
-    image: '/feature-conversation.jpg',
+      'Vague advice with no path forward. You leave the conversation the same way you arrived.',
   },
   {
-    icon: Mic,
-    title: 'Speak Freely',
+    label: 'Recording',
+    quote: '“Record yourself.”',
     description:
-      'Give a speech or just talk. Full analysis pipeline runs at the end — emotion timeline, filler word counts, pacing, AI-generated pattern summary.',
-    image: '/feature-free.jpg',
+      'You watch it once, cringe, and close the tab. No structure. No diagnosis. No next step.',
   },
-];
+] as const;
 
 export default function LandingPage() {
   const router = useRouter();
@@ -114,7 +111,7 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Section */}
-      <section className="relative pt-20 pb-24 px-6 flex flex-col items-center text-center overflow-hidden">
+      <section className="relative pt-20 pb-12 md:pb-16 px-6 flex flex-col items-center text-center overflow-hidden">
         {/* 3D Decorative Elements */}
         <motion.img
           src="/hero-3d-elements.png"
@@ -210,70 +207,50 @@ export default function LandingPage() {
 
       </section>
 
-      {/* Features Section */}
-      <section className="py-24 bg-cream-50">
+      {/* Problem at hand */}
+      <section className="pt-6 pb-16 sm:pt-8 sm:pb-20 bg-cream-100">
         <div className="max-w-6xl mx-auto px-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.7 }}
-            className="text-center mb-16"
+            className="text-center mb-9 sm:mb-10 max-w-3xl mx-auto"
           >
-            <h2 className="font-serif text-4xl font-semibold text-slate-900 mb-4">
-              Three ways to practice
+            <h2 className="font-serif text-3xl md:text-4xl font-semibold text-slate-900 mb-3 leading-tight">
+              Most people never get real feedback on how they communicate.
             </h2>
-            <p className="text-slate-500 text-lg">
-              Choose the mode that fits your goals
+            <p className="text-slate-500 text-base md:text-lg leading-relaxed">
+              The gap between how you think you sound and how you actually land
+              — that gap costs opportunities. Friends are kind, not calibrated.
+              Vague advice teaches nothing. Recording yourself leads to cringe,
+              not growth.
             </p>
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {features.map((feature, i) => (
+            {problemAtHand.map((item, i) => (
               <motion.div
-                key={feature.title}
-                initial={{ opacity: 0, y: 40 }}
+                key={item.label}
+                initial={{ opacity: 0, y: 32 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{
-                  duration: 0.7,
-                  delay: i * 0.15,
+                  duration: 0.65,
+                  delay: i * 0.12,
                   ease: [0.16, 1, 0.3, 1],
                 }}
-                whileHover={{ y: -6, scale: 1.02 }}
-                className="group relative bg-white rounded-2xl border border-cream-300 overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300"
+                className="bg-white rounded-2xl border border-cream-300 p-6 md:p-8 shadow-sm"
               >
-                {/* Gloss sweep */}
-                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10">
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      background:
-                        'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.5) 50%, transparent 70%)',
-                      backgroundSize: '200% 100%',
-                      animation: 'glossSweep 1s ease forwards',
-                    }}
-                  />
-                </div>
-
-                <div className="h-48 overflow-hidden bg-cream-100">
-                  <img
-                    src={feature.image}
-                    alt={feature.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                  />
-                </div>
-                <div className="p-6">
-                  <div className="w-10 h-10 rounded-xl bg-navy-500/10 flex items-center justify-center mb-4">
-                    <feature.icon size={22} className="text-navy-500" />
-                  </div>
-                  <h3 className="font-serif text-xl font-semibold text-slate-900 mb-2">
-                    {feature.title}
-                  </h3>
-                  <p className="text-sm text-slate-500 leading-relaxed">
-                    {feature.description}
-                  </p>
-                </div>
+                <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400 mb-4">
+                  {item.label}
+                </p>
+                <p className="font-serif text-xl font-semibold text-slate-900 mb-4 leading-snug">
+                  {item.quote}
+                </p>
+                <p className="text-sm text-slate-500 leading-relaxed">
+                  {item.description}
+                </p>
               </motion.div>
             ))}
           </div>
@@ -294,12 +271,6 @@ export default function LandingPage() {
         </div>
       </footer>
 
-      <style>{`
-        @keyframes glossSweep {
-          from { background-position: 200% 0; }
-          to { background-position: -200% 0; }
-        }
-      `}</style>
     </div>
   );
 }
