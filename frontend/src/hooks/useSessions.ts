@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type {
   PhaseCMergedAnalysisChunk,
-  PhaseCRecordingState,
   PhaseCScorecard,
 } from '@/lib/phase-c-api';
 
@@ -40,8 +39,29 @@ export interface PersistedSession {
   setup: Record<string, unknown>;
   rounds: Array<Record<string, unknown>>;
   summary: Record<string, unknown> | null;
-  media_refs: Array<Record<string, unknown>>;
-  raw_state: Record<string, unknown>;
+  media_refs: MediaRef[];
+  phase_c_recording: {
+    scorecard: PhaseCScorecard | null;
+    written_summary: string;
+    merged_chunks: PhaseCMergedAnalysisChunk[];
+  } | null;
+}
+
+export interface MediaRef {
+  kind: string;
+  round_index?: number;
+  turn_index?: number;
+  chunk_index?: number;
+  download_url: string;
+  upload: {
+    file_id: string | null;
+    storage_key: string;
+    filename: string;
+    original_filename: string;
+    mime_type: string;
+    size_bytes: number;
+    uploaded_at: string;
+  };
 }
 
 type LoadableResult<T> = {
@@ -143,48 +163,33 @@ export function useRecentSessions(limit = 10): LoadableResult<SessionPreview[]> 
 }
 
 export function useSession(sessionId: string | null): LoadableResult<PersistedSession> {
-  return useApiResource<PersistedSession>(sessionId ? `/api/sessions/${sessionId}` : null);
-}
-
-export function getPhaseCCompletedRecording(
-  session: PersistedSession | null | undefined,
-): PhaseCRecordingState | null {
-  if (!session || !isRecord(session.raw_state)) {
-    return null;
-  }
-
-  const completedRecording = session.raw_state.completed_recording;
-  if (!isRecord(completedRecording)) {
-    return null;
-  }
-
-  return completedRecording as unknown as PhaseCRecordingState;
+  return useApiResource<PersistedSession>(sessionId ? `/api/sessions/${sessionId}/replay` : null);
 }
 
 export function getPhaseCScorecardFromSession(
   session: PersistedSession | null | undefined,
 ): PhaseCScorecard | null {
-  return getPhaseCCompletedRecording(session)?.scorecard ?? null;
+  return session?.phase_c_recording?.scorecard ?? null;
 }
 
 export function getPhaseCMergedChunks(
   session: PersistedSession | null | undefined,
 ): PhaseCMergedAnalysisChunk[] {
-  const mergedAnalysis = getPhaseCCompletedRecording(session)?.merged_analysis;
-  return Array.isArray(mergedAnalysis?.chunks)
-    ? (mergedAnalysis.chunks as PhaseCMergedAnalysisChunk[])
-    : [];
+  return session?.phase_c_recording?.merged_chunks ?? [];
 }
 
 export function getPhaseCWrittenSummary(
   session: PersistedSession | null | undefined,
 ): string {
-  const writtenSummary = getPhaseCCompletedRecording(session)?.written_summary;
-  return typeof writtenSummary === 'string' ? writtenSummary : '';
+  return session?.phase_c_recording?.written_summary ?? '';
 }
 
 export function getSessionSummary(
   session: PersistedSession | null | undefined,
 ): Record<string, unknown> {
   return isRecord(session?.summary) ? session.summary : {};
+}
+
+export function getMediaUrl(downloadUrl: string): string {
+  return `${API_URL}${downloadUrl}`;
 }

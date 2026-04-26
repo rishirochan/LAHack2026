@@ -5,28 +5,32 @@ import {
   Loader2,
   MessageSquare,
   Mic,
+  PlayCircle,
+  X,
   Zap,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { EmotionTimeline } from '@/components/EmotionTimeline';
 import { PhaseCScorecard } from '@/components/PhaseCScorecard';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
+  getMediaUrl,
   getPhaseCMergedChunks,
   getPhaseCScorecardFromSession,
   getPhaseCWrittenSummary,
   getSessionSummary,
   useRecentSessions,
   useSession,
+  type MediaRef,
   type PersistedSession,
   type SessionMode,
   type SessionPreview,
@@ -95,6 +99,121 @@ function formatPercent(value: unknown) {
   return Number.isFinite(number) ? `${number}%` : '--';
 }
 
+function MarkdownCritique({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        h1: ({ children }) => <h1 className="mb-3 text-2xl font-semibold leading-snug text-slate-900">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-3 text-xl font-semibold leading-snug text-slate-900">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-3 text-lg font-semibold leading-snug text-slate-900">{children}</h3>,
+        h4: ({ children }) => <h4 className="mb-3 text-base font-semibold leading-snug text-slate-900">{children}</h4>,
+        p: ({ children }) => <p className="mb-3 text-sm leading-7 text-slate-600 last:mb-0">{children}</p>,
+        strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        ul: ({ children }) => <ul className="mb-3 list-disc space-y-2 pl-5 text-sm leading-7 text-slate-600">{children}</ul>,
+        ol: ({ children }) => <ol className="mb-3 list-decimal space-y-2 pl-5 text-sm leading-7 text-slate-600">{children}</ol>,
+        li: ({ children }) => <li>{children}</li>,
+        code: ({ children }) => (
+          <code className="rounded-md bg-white px-1.5 py-0.5 text-[0.9em] text-slate-800">{children}</code>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
+function formatMediaLabel(mediaRef: MediaRef) {
+  const sizeMb = mediaRef.upload.size_bytes ? `${(mediaRef.upload.size_bytes / (1024 * 1024)).toFixed(1)} MB` : null;
+  const kind = mediaRef.kind.includes('audio') ? 'Audio' : 'Video';
+  return sizeMb ? `${kind} • ${sizeMb}` : kind;
+}
+
+function ReplayVideoCard({ title, subtitle, mediaRef }: {
+  title: string;
+  subtitle: string;
+  mediaRef: MediaRef;
+}) {
+  return (
+    <div className="overflow-hidden rounded-[24px] border border-cream-300 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-4 border-b border-cream-200 px-5 py-4">
+        <div>
+          <p className="text-sm font-semibold text-slate-900">{title}</p>
+          <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-400">{subtitle}</p>
+        </div>
+        <Badge className="border-cream-200 bg-cream-50 px-3 py-1.5 text-slate-600">
+          {formatMediaLabel(mediaRef)}
+        </Badge>
+      </div>
+      <div className="bg-slate-950 p-3">
+        <video
+          controls
+          preload="metadata"
+          playsInline
+          className="aspect-video w-full rounded-[18px] bg-slate-950 object-contain"
+          src={getMediaUrl(mediaRef.download_url)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ReplayChunkAccordion({ title, subtitle, items }: {
+  title: string;
+  subtitle: string;
+  items: Array<{ id: string; label: string; detail: string; mediaRef: MediaRef }>;
+}) {
+  return (
+    <div className="rounded-[28px] border border-cream-300 bg-white p-6 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{title}</p>
+          <h3 className="mt-2 font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
+            Expand a recording chunk
+          </h3>
+        </div>
+        <div className="rounded-full bg-cream-100 px-4 py-2 text-xs font-medium text-slate-600">
+          {items.length} clips
+        </div>
+      </div>
+
+      <Accordion type="single" collapsible className="mt-5 space-y-3">
+        {items.map((item) => (
+          <AccordionItem
+            key={item.id}
+            value={item.id}
+            className="overflow-hidden rounded-[22px] border border-cream-200 bg-cream-50 px-0"
+          >
+            <AccordionTrigger className="px-5 py-4 text-left hover:no-underline">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-navy-500">
+                  <PlayCircle size={18} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                  <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-400">{item.detail}</p>
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="px-5 pb-5">
+              <p className="mb-3 text-xs uppercase tracking-[0.16em] text-slate-400">{subtitle}</p>
+              <div className="overflow-hidden rounded-[18px] bg-slate-950 p-3">
+                <video
+                  controls
+                  preload="metadata"
+                  playsInline
+                  className="aspect-video w-full rounded-[14px] bg-slate-950 object-contain"
+                  src={getMediaUrl(item.mediaRef.download_url)}
+                />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        ))}
+      </Accordion>
+    </div>
+  );
+}
+
 function ReplayCard({ session, index, onSelect }: {
   session: SessionPreview;
   index: number;
@@ -156,6 +275,9 @@ function PhaseAReplayDetail({ session }: { session: PersistedSession }) {
     ? Math.round((matchScores.reduce((total, score) => total + score, 0) / matchScores.length) * 100)
     : null;
   const fillerWords = isRecord(summary.filler_words) ? Object.entries(summary.filler_words) : [];
+  const roundVideoRefs = session.media_refs
+    .filter((mediaRef) => mediaRef.kind === 'video' && typeof mediaRef.round_index === 'number')
+    .sort((left, right) => Number(left.round_index) - Number(right.round_index));
 
   return (
     <div className="space-y-5">
@@ -184,9 +306,9 @@ function PhaseAReplayDetail({ session }: { session: PersistedSession }) {
           {rounds.length ? rounds.map((round, index) => (
             <div key={`${index}-${String(round.critique || '')}`} className="rounded-2xl bg-cream-50 p-4">
               <p className="text-sm font-semibold text-slate-900">Round {index + 1}</p>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {String(round.critique || 'No critique stored for this round.')}
-              </p>
+              <div className="mt-2">
+                <MarkdownCritique content={String(round.critique || 'No critique stored for this round.')} />
+              </div>
             </div>
           )) : (
             <p className="text-sm text-slate-500">No round critiques were stored for this session.</p>
@@ -206,6 +328,19 @@ function PhaseAReplayDetail({ session }: { session: PersistedSession }) {
           )}
         </div>
       </div>
+
+      {roundVideoRefs.length ? (
+        <div className="space-y-4">
+          {roundVideoRefs.map((mediaRef) => (
+            <ReplayVideoCard
+              key={`${mediaRef.kind}-${mediaRef.round_index}`}
+              title={`Round ${Number(mediaRef.round_index) + 1} Recording`}
+              subtitle="Full round video"
+              mediaRef={mediaRef}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -216,6 +351,18 @@ function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
   const turns = Array.isArray(summary.turns)
     ? summary.turns.filter((turn): turn is Record<string, unknown> => isRecord(turn))
     : [];
+  const chunkVideoRefs = session.media_refs
+    .filter((mediaRef) => mediaRef.kind === 'video_upload' && typeof mediaRef.turn_index === 'number' && typeof mediaRef.chunk_index === 'number')
+    .sort((left, right) => {
+      const turnDelta = Number(left.turn_index) - Number(right.turn_index);
+      return turnDelta !== 0 ? turnDelta : Number(left.chunk_index) - Number(right.chunk_index);
+    });
+  const chunkItems = chunkVideoRefs.map((mediaRef) => ({
+    id: `turn-${mediaRef.turn_index}-chunk-${mediaRef.chunk_index}`,
+    label: `Turn ${Number(mediaRef.turn_index) + 1} • Chunk ${Number(mediaRef.chunk_index) + 1}`,
+    detail: formatMediaLabel(mediaRef),
+    mediaRef,
+  }));
 
   return (
     <div className="space-y-5">
@@ -254,15 +401,23 @@ function PhaseBReplayDetail({ session }: { session: PersistedSession }) {
               <p className="mt-2 text-xs uppercase tracking-[0.16em] text-slate-400">
                 {String(turn.prompt || 'Prompt unavailable')}
               </p>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                {String(turn.critique || 'No critique stored for this turn.')}
-              </p>
+              <div className="mt-3">
+                <MarkdownCritique content={String(turn.critique || 'No critique stored for this turn.')} />
+              </div>
             </div>
           )) : (
             <p className="text-sm text-slate-500">No turn-level critiques were stored for this session.</p>
           )}
         </div>
       </div>
+
+      {chunkItems.length ? (
+        <ReplayChunkAccordion
+          title="Replay Clips"
+          subtitle="Turn chunk recording"
+          items={chunkItems}
+        />
+      ) : null}
     </div>
   );
 }
@@ -271,11 +426,35 @@ function PhaseCReplayDetail({ session }: { session: PersistedSession }) {
   const scorecard = getPhaseCScorecardFromSession(session);
   const writtenSummary = getPhaseCWrittenSummary(session);
   const mergedChunks = getPhaseCMergedChunks(session);
+  const chunkVideoRefs = session.media_refs
+    .filter((mediaRef) => mediaRef.kind === 'video_upload' && typeof mediaRef.chunk_index === 'number')
+    .sort((left, right) => Number(left.chunk_index) - Number(right.chunk_index));
+  const chunkItems = chunkVideoRefs.map((mediaRef) => {
+    const mergedChunk = mergedChunks.find((chunk) => chunk.chunk_index === mediaRef.chunk_index);
+    const detailParts = [
+      `Chunk ${Number(mediaRef.chunk_index) + 1}`,
+      mergedChunk?.transcript_segment ? mergedChunk.transcript_segment.slice(0, 64) : formatMediaLabel(mediaRef),
+    ];
+
+    return {
+      id: `chunk-${mediaRef.chunk_index}`,
+      label: `Chunk ${Number(mediaRef.chunk_index) + 1}`,
+      detail: detailParts.filter(Boolean).join(' • '),
+      mediaRef,
+    };
+  });
 
   return (
     <div className="space-y-6">
       <PhaseCScorecard scorecard={scorecard} writtenSummary={writtenSummary} />
       <EmotionTimeline chunks={mergedChunks} />
+      {chunkItems.length ? (
+        <ReplayChunkAccordion
+          title="Recording Chunks"
+          subtitle="Free speaking chunk"
+          items={chunkItems}
+        />
+      ) : null}
     </div>
   );
 }
@@ -297,6 +476,10 @@ export default function ReplaysPage() {
   }, [sessionIdFromUrl]);
 
   const updateSelectedSessionId = useCallback((nextSessionId: string | null) => {
+    if (nextSessionId === selectedSessionId) {
+      return;
+    }
+
     const nextParams = new URLSearchParams(searchParams.toString());
     if (nextSessionId) {
       nextParams.set('session', nextSessionId);
@@ -305,9 +488,11 @@ export default function ReplaysPage() {
     }
 
     const nextUrl = nextParams.toString() ? `/replays?${nextParams.toString()}` : '/replays';
-    router.replace(nextUrl, { scroll: false });
     setSelectedSessionId(nextSessionId);
-  }, [router, searchParams]);
+    startTransition(() => {
+      router.replace(nextUrl, { scroll: false });
+    });
+  }, [router, searchParams, selectedSessionId]);
 
   const selectedModeMeta = useMemo(() => {
     if (!selectedSession) {
@@ -315,6 +500,36 @@ export default function ReplaysPage() {
     }
     return MODE_META[selectedSession.mode];
   }, [selectedSession]);
+
+  const dialogTitle = selectedSession?.mode_label ?? 'Replay details';
+  const dialogDescription = selectedSession
+    ? formatDateLabel(selectedSession.completed_at || selectedSession.updated_at || selectedSession.created_at)
+    : selectedSessionLoading
+      ? 'Loading replay details.'
+      : selectedSessionError
+        ? 'Replay details could not be loaded.'
+        : 'Select a session to review its replay.';
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        updateSelectedSessionId(null);
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedSessionId, updateSelectedSessionId]);
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -362,53 +577,65 @@ export default function ReplaysPage() {
         </div>
       )}
 
-      <Dialog open={Boolean(selectedSessionId)} onOpenChange={(open) => !open && updateSelectedSessionId(null)}>
-        <DialogContent
-          showCloseButton
-          className="max-h-[88vh] max-w-5xl overflow-y-auto rounded-[28px] border-cream-300 bg-cream-50 p-0"
-        >
-          {selectedSession && selectedModeMeta && (
-            <DialogHeader className="border-b border-cream-200 px-6 py-5 text-left">
+      {selectedSessionId && (
+        <div className="fixed inset-0 z-[90]">
+          <button
+            type="button"
+            aria-label="Close replay"
+            className="absolute inset-0 bg-black/45"
+            onClick={() => updateSelectedSessionId(null)}
+          />
+
+          <div className="absolute inset-x-4 top-1/2 z-[91] mx-auto flex max-h-[88vh] w-full max-w-5xl -translate-y-1/2 flex-col overflow-hidden rounded-[28px] border border-cream-300 bg-cream-50 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-cream-200 px-6 py-5 text-left">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cream-100">
-                  <selectedModeMeta.icon size={20} className={selectedModeMeta.iconClassName} />
-                </div>
+                {selectedModeMeta && (
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cream-100">
+                    <selectedModeMeta.icon size={20} className={selectedModeMeta.iconClassName} />
+                  </div>
+                )}
                 <div>
-                  <DialogTitle className="font-['Playfair_Display'] text-2xl text-slate-900">
-                    {selectedSession.mode_label}
-                  </DialogTitle>
-                  <DialogDescription className="mt-1 text-sm text-slate-500">
-                    {formatDateLabel(selectedSession.completed_at || selectedSession.updated_at || selectedSession.created_at)}
-                  </DialogDescription>
+                  <h2 className="font-['Playfair_Display'] text-2xl text-slate-900">
+                    {dialogTitle}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">{dialogDescription}</p>
                 </div>
               </div>
-            </DialogHeader>
-          )}
 
-          <div className="p-6">
-            {selectedSessionLoading && (
-              <div className="inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
-                <Loader2 size={16} className="animate-spin text-navy-500" />
-                Loading replay details
-              </div>
-            )}
+              <button
+                type="button"
+                onClick={() => updateSelectedSessionId(null)}
+                className="rounded-full bg-white p-2 text-slate-500 transition-colors hover:text-slate-900"
+              >
+                <X size={18} />
+              </button>
+            </div>
 
-            {selectedSessionError && (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
-                {selectedSessionError}
-              </div>
-            )}
+            <div className="overflow-y-auto p-6">
+              {selectedSessionLoading && (
+                <div className="inline-flex items-center gap-3 rounded-full bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+                  <Loader2 size={16} className="animate-spin text-navy-500" />
+                  Loading replay details
+                </div>
+              )}
 
-            {selectedSession && (
-              <>
-                {selectedSession.mode === 'phase_c' && <PhaseCReplayDetail session={selectedSession} />}
-                {selectedSession.mode === 'phase_b' && <PhaseBReplayDetail session={selectedSession} />}
-                {selectedSession.mode === 'phase_a' && <PhaseAReplayDetail session={selectedSession} />}
-              </>
-            )}
+              {selectedSessionError && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+                  {selectedSessionError}
+                </div>
+              )}
+
+              {selectedSession && (
+                <>
+                  {selectedSession.mode === 'phase_c' && <PhaseCReplayDetail session={selectedSession} />}
+                  {selectedSession.mode === 'phase_b' && <PhaseBReplayDetail session={selectedSession} />}
+                  {selectedSession.mode === 'phase_a' && <PhaseAReplayDetail session={selectedSession} />}
+                </>
+              )}
+            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
     </div>
   );
 }

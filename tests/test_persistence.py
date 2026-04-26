@@ -424,6 +424,68 @@ class PersistenceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["session_id"], "detail-a")
 
+    def test_session_replay_endpoint_returns_lean_document(self) -> None:
+        state = {
+            "session_id": "replay-c",
+            "status": "complete",
+            "completed_recording": {
+                "transcript_audio_upload": {
+                    "path": "/tmp/replay-c-transcript.webm",
+                    "file_id": "replay-c-transcript-file",
+                    "storage_key": "phase_c/replay-c/transcript_audio.webm",
+                    "filename": "transcript_audio.webm",
+                    "original_filename": "replay-c-transcript.webm",
+                    "mime_type": "audio/webm",
+                    "size_bytes": 2048,
+                    "uploaded_at": "2026-04-25T00:00:02+00:00",
+                },
+                "merged_analysis": {
+                    "chunks": [
+                        {
+                            "chunk_index": 0,
+                            "t_start": 0,
+                            "t_end": 5000,
+                            "transcript_segment": "Concise update.",
+                            "dominant_video_emotion": "confidence",
+                            "video_confidence": 0.81,
+                            "dominant_audio_emotion": "confidence",
+                            "audio_confidence": 0.74,
+                            "eye_contact_pct": 82.0,
+                            "status": "done",
+                        }
+                    ]
+                },
+                "scorecard": {
+                    "overall_score": 91,
+                    "average_wpm": 148.5,
+                    "filler_word_count": 0,
+                    "duration_seconds": 12.4,
+                    "strengths": ["Clear pacing."],
+                    "improvement_areas": ["Add more vocal variety."],
+                },
+                "written_summary": "Strong session.",
+            },
+        }
+
+        asyncio.run(
+            self.repository.create_phase_c_session(
+                session_id="replay-c",
+                state=state,
+            )
+        )
+
+        response = self.client.get("/api/sessions/replay-c/replay")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["session_id"], "replay-c")
+        self.assertNotIn("raw_state", payload)
+        self.assertIn("media_refs", payload)
+        self.assertEqual(payload["media_refs"][0]["kind"], "transcript_audio_upload")
+        self.assertEqual(payload["phase_c_recording"]["scorecard"]["overall_score"], 91)
+        self.assertEqual(payload["phase_c_recording"]["written_summary"], "Strong session.")
+        self.assertEqual(payload["phase_c_recording"]["merged_chunks"][0]["chunk_index"], 0)
+
     def test_chunk_and_trend_endpoints_return_normalized_analytics(self) -> None:
         state = build_initial_state("api-phase-b", "public_speaking", 4)
         state["status"] = "complete"

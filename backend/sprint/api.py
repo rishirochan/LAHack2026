@@ -128,6 +128,16 @@ async def get_persisted_session(session_id: str) -> dict[str, object]:
     return session
 
 
+@app.get("/api/sessions/{session_id}/replay")
+async def get_persisted_replay_session(session_id: str) -> dict[str, object]:
+    """Return a replay-focused session document without the heavy raw session state."""
+
+    session = await get_session_repository().get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session was not found.")
+    return _to_replay_session(session)
+
+
 @app.get("/api/tts/voices")
 async def list_tts_voices() -> dict[str, object]:
     """Return normalized ElevenLabs voice metadata for the settings UI."""
@@ -196,6 +206,56 @@ def _to_session_preview(session: dict) -> dict[str, object]:
         "duration_seconds": summary.get("duration_seconds") if isinstance(summary, dict) else None,
         "total_turns": summary.get("total_turns") if isinstance(summary, dict) else None,
         "round_count": len(summary.get("rounds", [])) if isinstance(summary.get("rounds"), list) else None,
+    }
+
+
+def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
+    if session.get("mode") != "phase_c":
+        return None
+
+    raw_state = session.get("raw_state")
+    if not isinstance(raw_state, dict):
+        return {
+            "scorecard": None,
+            "written_summary": "",
+            "merged_chunks": [],
+        }
+
+    completed_recording = raw_state.get("completed_recording")
+    if not isinstance(completed_recording, dict):
+        return {
+            "scorecard": None,
+            "written_summary": "",
+            "merged_chunks": [],
+        }
+
+    merged_analysis = completed_recording.get("merged_analysis")
+    merged_chunks = merged_analysis.get("chunks") if isinstance(merged_analysis, dict) else []
+
+    return {
+        "scorecard": completed_recording.get("scorecard") if isinstance(completed_recording.get("scorecard"), dict) else None,
+        "written_summary": completed_recording.get("written_summary")
+        if isinstance(completed_recording.get("written_summary"), str)
+        else "",
+        "merged_chunks": merged_chunks if isinstance(merged_chunks, list) else [],
+    }
+
+
+def _to_replay_session(session: dict) -> dict[str, object]:
+    return {
+        "session_id": session.get("session_id"),
+        "user_id": session.get("user_id"),
+        "mode": session.get("mode"),
+        "mode_label": session.get("mode_label"),
+        "status": session.get("status"),
+        "created_at": session.get("created_at"),
+        "updated_at": session.get("updated_at"),
+        "completed_at": session.get("completed_at"),
+        "setup": session.get("setup") if isinstance(session.get("setup"), dict) else {},
+        "rounds": session.get("rounds") if isinstance(session.get("rounds"), list) else [],
+        "summary": session.get("summary") if isinstance(session.get("summary"), dict) else None,
+        "media_refs": session.get("media_refs") if isinstance(session.get("media_refs"), list) else [],
+        "phase_c_recording": _to_phase_c_replay_recording(session),
     }
 
 
@@ -509,7 +569,7 @@ async def _build_media_response(media_ref: dict[str, object]) -> StreamingRespon
         media_type=str(upload.get("mime_type") or "application/octet-stream"),
     )
     filename = str(upload.get("original_filename") or upload.get("filename") or "media.bin")
-    response.headers["Content-Disposition"] = f'attachment; filename="{quote(filename)}"'
+    response.headers["Content-Disposition"] = f'inline; filename="{quote(filename)}"'
     return response
 
 

@@ -4,6 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2, Mic, RefreshCw, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   emotionOptions,
   type DisplayMetric,
   type PhaseADerivedMetrics,
@@ -230,6 +240,17 @@ export default function SprintPage() {
 
   if (status === 'summary') {
     const fillerEntries = Object.entries(summary?.filler_words ?? {});
+    const matchScoreData = (summary?.match_scores ?? []).map((score, index) => ({
+      round: `R${index + 1}`,
+      score: Math.round(score * 100),
+      fill: '#153e75',
+    }));
+    const fillerChartData = fillerEntries
+      .map(([word, count]) => ({
+        word,
+        count: Number(count),
+      }))
+      .sort((left, right) => right.count - left.count);
 
     return (
       <div className="mx-auto max-w-5xl space-y-6">
@@ -253,7 +274,7 @@ export default function SprintPage() {
                   <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-400">
                     Round {index + 1}
                   </p>
-                  <p className="text-sm leading-relaxed text-slate-700">{item}</p>
+                  <MarkdownCritique content={item} />
                 </div>
               ))}
             </div>
@@ -263,28 +284,70 @@ export default function SprintPage() {
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">
               Match Score Trend
             </h2>
-            <div className="flex h-44 items-end gap-3 rounded-2xl bg-cream-100 p-4">
-              {(summary?.match_scores ?? []).map((score, index) => (
-                <div key={`${score}-${index}`} className="flex flex-1 flex-col items-center gap-2">
-                  <div
-                    className="w-full rounded-t-xl bg-navy-500"
-                    style={{ height: `${Math.max(Math.round(score * 100), 8)}%` }}
-                  />
-                  <span className="text-xs font-semibold text-slate-500">{Math.round(score * 100)}%</span>
+            <div className="h-52 rounded-2xl bg-cream-100 p-4">
+              {matchScoreData.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={matchScoreData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                    <CartesianGrid vertical={false} stroke="#eadcc2" />
+                    <XAxis dataKey="round" tick={{ fill: '#64748b', fontSize: 12 }} tickLine={false} axisLine={false} />
+                    <YAxis
+                      domain={[0, 100]}
+                      tick={{ fill: '#64748b', fontSize: 12 }}
+                      tickLine={false}
+                      axisLine={false}
+                      width={40}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(21, 62, 117, 0.08)' }}
+                      formatter={(value) => [`${value}%`, 'Match score']}
+                    />
+                    <Bar dataKey="score" radius={[12, 12, 0, 0]}>
+                      {matchScoreData.map((entry) => (
+                        <Cell key={entry.round} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                  No rounds recorded yet.
                 </div>
-              ))}
+              )}
             </div>
 
             <h2 className="mb-4 mt-6 text-sm font-semibold uppercase tracking-widest text-navy-500">
               Filler Words
             </h2>
-            <div className="flex flex-wrap gap-2">
-              {fillerEntries.length ? (
-                fillerEntries.map(([word, count]) => (
-                  <span key={word} className="rounded-full bg-cream-100 px-3 py-1 text-sm text-slate-700">
-                    {word}: {count}
-                  </span>
-                ))
+            <div className="rounded-2xl bg-cream-100 p-4">
+              {fillerChartData.length ? (
+                <div className="h-44">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={fillerChartData}
+                      layout="vertical"
+                      margin={{ top: 0, right: 8, bottom: 0, left: 8 }}
+                    >
+                      <CartesianGrid horizontal={false} stroke="#eadcc2" />
+                      <XAxis
+                        type="number"
+                        tick={{ fill: '#64748b', fontSize: 12 }}
+                        tickLine={false}
+                        axisLine={false}
+                        allowDecimals={false}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="word"
+                        tick={{ fill: '#64748b', fontSize: 12 }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={72}
+                      />
+                      <Tooltip formatter={(value) => [value, 'Count']} cursor={{ fill: 'rgba(21, 62, 117, 0.08)' }} />
+                      <Bar dataKey="count" radius={[0, 12, 12, 0]} fill="#4f46e5" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               ) : (
                 <span className="text-sm text-slate-500">No filler words detected.</span>
               )}
