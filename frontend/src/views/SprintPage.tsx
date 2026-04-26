@@ -421,7 +421,7 @@ export default function SprintPage() {
             <button
               onClick={handleRegenerate}
               disabled={status === 'processing'}
-              className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-slate-500 transition-colors hover:bg-cream-100 hover:text-slate-700"
+              className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm text-slate-500 transition-colors hover:bg-cream-100 hover:text-slate-700"
             >
               <RefreshCw size={14} /> Regenerate
             </button>
@@ -478,6 +478,7 @@ export default function SprintPage() {
           </div>
 
           <MeasuredSignalsCard
+            score={roundResult?.derived_metrics?.overall_match_score ?? roundResult?.match_score ?? 0}
             displayMetrics={roundResult?.display_metrics ?? []}
             derivedMetrics={roundResult?.derived_metrics}
             fillerWordCount={roundResult?.filler_word_count ?? 0}
@@ -594,11 +595,13 @@ function ProcessingStages({ activeStage }: { activeStage: string }) {
 }
 
 function MeasuredSignalsCard({
+  score,
   displayMetrics,
   derivedMetrics,
   fillerWordCount,
   fillerWordBreakdown,
 }: {
+  score: number;
   displayMetrics: DisplayMetric[];
   derivedMetrics?: PhaseADerivedMetrics;
   fillerWordCount: number;
@@ -606,13 +609,15 @@ function MeasuredSignalsCard({
 }) {
   const mismatchMoments = derivedMetrics?.top_mismatch_moments ?? [];
   const fillerEntries = Object.entries(fillerWordBreakdown).sort((left, right) => right[1] - left[1]);
+  const visibleMetrics = displayMetrics.filter((metric) => metric.key !== 'overall_match_score');
 
   return (
-    <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
-      <div>
+    <div className="space-y-4">
+      <ScoreCard score={score} />
+      <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
         <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">Measured Signals</p>
         <div className="space-y-3">
-          {displayMetrics.map((metric) => (
+          {visibleMetrics.map((metric) => (
             <div key={metric.key} className="rounded-2xl bg-cream-100 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-900">{metric.label}</p>
@@ -643,22 +648,56 @@ function MeasuredSignalsCard({
 
         {mismatchMoments.length > 0 && (
           <div className="mt-5 space-y-4">
-            {mismatchMoments.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Notable mismatches</p>
-                <div className="mt-2 space-y-2">
-                  {mismatchMoments.map((moment, index) => (
-                    <p key={`${moment.timestamp_ms}-${moment.word}-${index}`} className="text-sm text-slate-600">
-                      {formatTimestamp(moment.timestamp_ms)} on "{moment.word}": face read {moment.face_emotion_type}, voice read{' '}
-                      {moment.voice_emotion_type}
-                    </p>
-                  ))}
-                </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Notable mismatches</p>
+              <div className="mt-2 space-y-2">
+                {mismatchMoments.map((moment, index) => (
+                  <p key={`${moment.timestamp_ms}-${moment.word}-${index}`} className="text-sm text-slate-600">
+                    {formatTimestamp(moment.timestamp_ms)} on "{moment.word}": face read {moment.face_emotion_type}, voice read{' '}
+                    {moment.voice_emotion_type}
+                  </p>
+                ))}
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ScoreCard({ score }: { score: number }) {
+  const percentage = Math.round(score * 100);
+  const accentClass =
+    score > 0.6 ? 'text-emerald-600 stroke-emerald-500' : score >= 0.3 ? 'text-amber-500 stroke-amber-400' : 'text-red-500 stroke-red-400';
+  const circumference = 2 * Math.PI * 42;
+  const dashOffset = circumference * (1 - Math.min(Math.max(score, 0), 1));
+
+  return (
+    <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
+      <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-navy-500">Emotion Match</p>
+      <div className="relative mx-auto h-28 w-28">
+        <svg className="-rotate-90" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="42" fill="none" strokeWidth="10" className="stroke-cream-200" />
+          <circle
+            cx="50"
+            cy="50"
+            r="42"
+            fill="none"
+            strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+            className={accentClass}
+          />
+        </svg>
+        <div className={`absolute inset-0 flex items-center justify-center text-2xl font-bold ${accentClass.split(' ')[0]}`}>
+          {percentage}%
+        </div>
+      </div>
+      <p className="mt-4 text-center text-sm text-slate-500">
+        Based on the overall response trend, not just one peak emotion spike.
+      </p>
     </div>
   );
 }
