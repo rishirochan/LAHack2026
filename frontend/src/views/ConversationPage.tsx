@@ -303,15 +303,6 @@ export default function ConversationPage() {
   if (status === 'setup') {
     return (
       <div className="mx-auto max-w-6xl space-y-8">
-        <div className="text-center">
-          <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-            Conversation Practice
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Describe the conversation you want to rehearse, then practice it with a generated peer and a full coaching report.
-          </p>
-        </div>
-
         <section className="mx-auto w-full max-w-4xl rounded-[32px] border border-cream-200 bg-white p-8 shadow-sm sm:p-10">
           <div className="text-center">
             <p className="text-sm font-semibold uppercase tracking-widest text-navy-500">Session Shape</p>
@@ -351,7 +342,7 @@ export default function ConversationPage() {
           </div>
 
           <Collapsible open={isExamplesOpen} onOpenChange={setIsExamplesOpen} className="mt-8">
-            <div className="flex justify-center">
+            <div className="flex flex-wrap items-center justify-center gap-3">
               <CollapsibleTrigger asChild>
                 <button
                   type="button"
@@ -363,6 +354,14 @@ export default function ConversationPage() {
                   />
                 </button>
               </CollapsibleTrigger>
+              <button
+                type="button"
+                onClick={handleStart}
+                disabled={!normalizedPracticePrompt || promptTooLong}
+                className="rounded-full bg-navy-500 px-8 py-3.5 text-sm font-medium text-white shadow-md transition hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+              >
+                Start Conversation
+              </button>
             </div>
             <CollapsibleContent className="data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down overflow-hidden">
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -384,22 +383,6 @@ export default function ConversationPage() {
               </div>
             </CollapsibleContent>
           </Collapsible>
-
-          <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-            Camera video and microphone audio are uploaded for analysis during the session. Media is stored
-            as session-linked files rather than inside the session document itself.
-          </div>
-
-          <div className="mt-8 flex justify-center">
-            <button
-              type="button"
-              onClick={handleStart}
-              disabled={!normalizedPracticePrompt || promptTooLong}
-              className="rounded-full bg-navy-500 px-8 py-3.5 text-sm font-medium text-white shadow-md transition hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-            >
-              Start Conversation
-            </button>
-          </div>
 
           {activeError && (
             <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{activeError}</p>

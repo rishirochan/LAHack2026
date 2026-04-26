@@ -122,15 +122,6 @@ export default function FreePage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="mb-6">
-        <h1 className="font-['Playfair_Display'] text-2xl font-semibold text-slate-900">
-          Free Speaking
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Record one uninterrupted speaking session and get a full broker scorecard.
-        </p>
-      </div>
-
       <AnimatePresence mode="wait">
         {showSetup && (
           <motion.div
