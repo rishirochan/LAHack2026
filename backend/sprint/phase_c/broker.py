@@ -3,11 +3,10 @@
 from collections import Counter
 from typing import Any
 
+from backend.shared.word_analysis import count_fillers, normalize_word, FILLER_SINGLE_WORDS
 from backend.sprint.phase_c.constants import (
     COMMON_STOPWORDS,
     EMOTIONAL_FLATNESS_THRESHOLD_MS,
-    FILLER_MULTI_WORDS,
-    FILLER_SINGLE_WORDS,
     NERVOUSNESS_THRESHOLD_RATIO,
     NERVOUS_EMOTIONS,
     NEUTRAL_EMOTION,
@@ -15,32 +14,6 @@ from backend.sprint.phase_c.constants import (
     PACE_WPM_MAX,
     PACE_WPM_MIN,
 )
-
-
-def normalize_word(word: str) -> str:
-    return word.strip().lower().strip(".,!?;:\"'()[]{}")
-
-
-def count_fillers(words: list[dict[str, Any]]) -> tuple[int, dict[str, int]]:
-    normalized = [normalize_word(str(word.get("word") or "")) for word in words]
-    breakdown: Counter[str] = Counter()
-    index = 0
-    while index < len(normalized):
-        token = normalized[index]
-        matched = False
-        for filler in FILLER_MULTI_WORDS:
-            filler_tokens = filler.split()
-            if normalized[index:index + len(filler_tokens)] == filler_tokens:
-                breakdown[filler] += 1
-                index += len(filler_tokens)
-                matched = True
-                break
-        if matched:
-            continue
-        if token in FILLER_SINGLE_WORDS:
-            breakdown[token] += 1
-        index += 1
-    return sum(breakdown.values()), dict(breakdown)
 
 
 def extract_top_repeated_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:

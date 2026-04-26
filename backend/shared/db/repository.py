@@ -1060,6 +1060,7 @@ def _phase_c_summary(state: dict[str, Any]) -> dict[str, Any] | None:
         "overall_score": scorecard.get("overall_score"),
         "average_wpm": scorecard.get("average_wpm"),
         "filler_word_count": scorecard.get("filler_word_count"),
+        "filler_word_breakdown": scorecard.get("filler_word_breakdown") or {},
         "duration_seconds": scorecard.get("duration_seconds"),
         "strengths": scorecard.get("strengths") or [],
         "improvement_areas": scorecard.get("improvement_areas") or [],
@@ -1217,7 +1218,7 @@ def _build_phase_a_stats(sessions: list[dict[str, Any]]) -> dict[str, Any]:
         if isinstance(rounds, list):
             for rnd in rounds:
                 if isinstance(rnd, dict):
-                    fr = rnd.get("filler_rate")
+                    fr = rnd.get("derived_metrics", {}).get("filler_rate") if isinstance(rnd.get("derived_metrics"), dict) else None
                     if isinstance(fr, (int, float)):
                         filler_rates.append(float(fr))
 

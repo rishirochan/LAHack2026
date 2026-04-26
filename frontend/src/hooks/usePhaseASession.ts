@@ -72,6 +72,7 @@ export type RoundResult = {
   match_score: number;
   filler_words_found: string[];
   filler_word_count: number;
+  filler_word_breakdown: Record<string, number>;
   derived_metrics?: PhaseADerivedMetrics;
   display_metrics?: DisplayMetric[];
 };
@@ -87,6 +88,7 @@ export type SessionSummary = {
     match_score: number;
     filler_words_found: string[];
     filler_word_count: number;
+    filler_word_breakdown: Record<string, number>;
     derived_metrics?: PhaseADerivedMetrics;
     display_metrics?: DisplayMetric[];
   }>;
@@ -110,11 +112,16 @@ export function usePhaseASession() {
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [activeTtsKind, setActiveTtsKind] = useState<'scenario' | 'critique' | null>(null);
+  const [isEnding, setIsEnding] = useState(false);
   const websocketRef = useRef<WebSocket | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAbortControllerRef = useRef<AbortController | null>(null);
+  const ttsTokenRef = useRef(0);
 
   async function startSession(setup: SessionSetup) {
     clearSessionSurface();
+    setIsEnding(false);
     setStatus('scenario');
 
     const response = await fetch(`${API_URL}/api/phase-a/sessions`, {
@@ -168,7 +175,9 @@ export function usePhaseASession() {
       return;
     }
 
+    stopActiveAudio();
     setErrorMessage('');
+    setIsEnding(!continueSession);
     const response = await fetch(`${API_URL}/api/phase-a/sessions/${sessionId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -176,6 +185,7 @@ export function usePhaseASession() {
     });
 
     if (!response.ok) {
+      setIsEnding(false);
       const errorDetail = await response
         .json()
         .then((payload) => String(payload.detail ?? ''))
@@ -184,6 +194,7 @@ export function usePhaseASession() {
     }
 
     if (continueSession) {
+      setIsEnding(false);
       setStatus('scenario');
       setScenarioPrompt('');
       setCritique('');
@@ -192,8 +203,60 @@ export function usePhaseASession() {
       setErrorMessage('');
       return;
     }
+  }
 
-    setStatus('summary');
+  async function toggleTextToSpeech(kind: 'scenario' | 'critique', text: string) {
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      return;
+    }
+
+    if (activeTtsKind === kind) {
+      stopActiveAudio();
+      return;
+    }
+
+    stopActiveAudio();
+    setErrorMessage('');
+    setActiveTtsKind(kind);
+
+    const controller = new AbortController();
+    ttsAbortControllerRef.current = controller;
+    const playbackToken = ttsTokenRef.current;
+
+    try {
+      const response = await fetch(`${API_URL}/api/phase-a/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmedText }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorDetail = await response
+          .json()
+          .then((payload) => String(payload.detail ?? ''))
+          .catch(() => '');
+        throw new Error(errorDetail || 'Could not play the audio.');
+      }
+
+      const audioBlob = await response.blob();
+      if (controller.signal.aborted || playbackToken !== ttsTokenRef.current) {
+        return;
+      }
+
+      playAudioBlob(audioBlob, playbackToken);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setActiveTtsKind(null);
+      setErrorMessage(error instanceof Error ? error.message : 'Could not play the audio.');
+    } finally {
+      if (ttsAbortControllerRef.current === controller) {
+        ttsAbortControllerRef.current = null;
+      }
+    }
   }
 
   function connectWebsocket(id: string) {
@@ -225,33 +288,25 @@ export function usePhaseASession() {
         setStatus('processing');
         setProcessingStage(String(event.payload.stage ?? ''));
         break;
-      case 'tts_start':
-        stopActiveAudio();
-        if (event.payload.audio_type === 'critique') {
-          setCritique(String(event.payload.text ?? ''));
-          setStatus('critique');
-        }
-        break;
-      case 'audio_blob':
-        playAudioBlob(
-          String(event.payload.audio ?? ''),
-          String(event.payload.mime_type ?? 'audio/mpeg'),
-        );
-        break;
       case 'round_result':
         setRoundResult(event.payload as unknown as RoundResult);
         setCritique(String(event.payload.critique ?? ''));
+        setIsEnding(false);
+        setStatus('critique');
         break;
       case 'retry_recording':
         setStatus('recording');
+        setIsEnding(false);
         setErrorMessage(String(event.payload.message ?? 'Try recording again.'));
         break;
       case 'session_summary':
         setSummary(event.payload as unknown as SessionSummary);
+        setIsEnding(false);
         setStatus('summary');
         void refetchSessions();
         break;
       case 'error':
+        setIsEnding(false);
         setStatus('error');
         setErrorMessage(String(event.payload.message ?? 'Something went wrong.'));
         break;
@@ -261,27 +316,17 @@ export function usePhaseASession() {
   }
 
   function clearSessionSurface() {
+    stopActiveAudio();
     setScenarioPrompt('');
     setCritique('');
     setProcessingStage('');
     setRoundResult(null);
     setSummary(null);
     setErrorMessage('');
+    setActiveTtsKind(null);
   }
 
-  function playAudioBlob(base64Audio: string, mimeType: string) {
-    if (!base64Audio) {
-      return;
-    }
-
-    stopActiveAudio();
-    const binary = window.atob(base64Audio);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-
-    const blob = new Blob([bytes], { type: mimeType || 'audio/mpeg' });
+  function playAudioBlob(blob: Blob, playbackToken: number) {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audioElementRef.current = audio;
@@ -290,16 +335,26 @@ export function usePhaseASession() {
       if (audioElementRef.current === audio) {
         audioElementRef.current = null;
       }
+      if (playbackToken === ttsTokenRef.current) {
+        setActiveTtsKind(null);
+      }
     };
     void audio.play().catch(() => {
       URL.revokeObjectURL(url);
       if (audioElementRef.current === audio) {
         audioElementRef.current = null;
       }
+      if (playbackToken === ttsTokenRef.current) {
+        setActiveTtsKind(null);
+      }
     });
   }
 
   function stopActiveAudio() {
+    ttsTokenRef.current += 1;
+    ttsAbortControllerRef.current?.abort();
+    ttsAbortControllerRef.current = null;
+    setActiveTtsKind(null);
     const audio = audioElementRef.current;
     if (!audio) {
       return;
@@ -318,6 +373,7 @@ export function usePhaseASession() {
     websocketRef.current?.close();
     websocketRef.current = null;
     setSessionId(null);
+    setIsEnding(false);
     setStatus('setup');
     clearSessionSurface();
   }
@@ -331,9 +387,14 @@ export function usePhaseASession() {
     roundResult,
     summary,
     errorMessage,
+    isScenarioAudioPlaying: activeTtsKind === 'scenario',
+    isCritiqueAudioPlaying: activeTtsKind === 'critique',
+    isEnding,
     startSession,
     uploadRecording,
     chooseContinue,
+    toggleScenarioTextToSpeech: () => toggleTextToSpeech('scenario', scenarioPrompt),
+    toggleCritiqueTextToSpeech: () => toggleTextToSpeech('critique', critique),
     resetAll,
   };
 }

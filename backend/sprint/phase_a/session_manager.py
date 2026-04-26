@@ -43,7 +43,8 @@ class PhaseASessionManager:
             get_session_repository().create_phase_a_session(
                 session_id=session_id,
                 initial_state=initial_state,
-            )
+            ),
+            key=session_id,
         )
         return session
 
@@ -133,7 +134,8 @@ class PhaseASessionManager:
                 session_id=session_id,
                 raw_state=state,
                 media_refs=session.media_refs,
-            )
+            ),
+            key=session_id,
         )
 
     def add_round(self, session_id: str, state: dict[str, Any]) -> None:
@@ -144,6 +146,7 @@ class PhaseASessionManager:
             match_score=float(state.get("match_score") or 0),
             filler_words_found=list(merged_analysis.get("filler_words_found") or []),
             filler_word_count=int(merged_analysis.get("filler_word_count") or 0),
+            filler_word_breakdown=dict(merged_analysis.get("filler_word_breakdown") or {}),
             derived_metrics=dict(merged_analysis.get("derived_metrics") or {}),
             display_metrics=list(merged_analysis.get("display_metrics") or []),
         )
@@ -159,7 +162,8 @@ class PhaseASessionManager:
                 summary=session_summary,
                 raw_state=state,
                 media_refs=session.media_refs,
-            )
+            ),
+            key=session_id,
         )
 
     def get_summary(self, session_id: str) -> SessionSummaryResponse:
@@ -213,4 +217,3 @@ def _public_upload_ref(upload: dict[str, Any]) -> dict[str, Any]:
         "size_bytes": upload.get("size_bytes"),
         "uploaded_at": upload.get("uploaded_at"),
     }
-

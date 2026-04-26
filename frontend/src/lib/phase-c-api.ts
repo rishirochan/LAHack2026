@@ -125,11 +125,55 @@ export type PhaseCWsEvent =
   | { type: 'retry_recording'; payload: { message: string } }
   | { type: 'error'; payload: { message: string } };
 
+function normalizeDetail(detail: unknown): string {
+  if (typeof detail === 'string') {
+    return detail;
+  }
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => normalizeDetail(item))
+      .filter(Boolean)
+      .join('; ');
+  }
+
+  if (detail && typeof detail === 'object') {
+    const maybeMessage =
+      ('message' in detail && normalizeDetail(detail.message)) ||
+      ('detail' in detail && normalizeDetail(detail.detail)) ||
+      ('msg' in detail && normalizeDetail(detail.msg));
+    if (maybeMessage) {
+      return maybeMessage;
+    }
+
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+
+  if (detail == null) {
+    return '';
+  }
+
+  return String(detail);
+}
+
+async function safeDetail(response: Response) {
+  try {
+    const data = (await response.json()) as { detail?: unknown };
+    return normalizeDetail(data.detail);
+  } catch {
+    return '';
+  }
+}
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`${response.status}: ${body}`);
+    const detail = await safeDetail(response);
+    throw new Error(detail ? `${response.status}: ${detail}` : `${response.status}: Request failed`);
   }
   return response.json() as Promise<T>;
 }
@@ -176,8 +220,13 @@ export function uploadChunk(
 }
 
 export function transcribeAudio(sessionId: string, audioBlob: Blob) {
+  if (audioBlob.size === 0) {
+    throw new Error('The recording finished before any audio was captured. Try speaking for a moment before stopping.');
+  }
+
   const form = new FormData();
-  form.append('audio_file', audioBlob, 'phase-c-transcript-audio.webm');
+  const filename = audioBlob.type === 'audio/wav' ? 'phase-c-transcript-audio.wav' : 'phase-c-transcript-audio.webm';
+  form.append('audio_file', audioBlob, filename);
   return json<{ transcript: string; word_count: number }>(
     `${API_URL}/api/phase-c/sessions/${sessionId}/transcribe`,
     { method: 'POST', body: form },

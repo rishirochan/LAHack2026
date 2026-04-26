@@ -53,6 +53,31 @@ export default function FreePage() {
     refetch: refetchPersistedSession,
   } = useSession(status === 'results' && sessionId ? sessionId : null);
   const mergedChunks = getPhaseCMergedChunks(persistedSession);
+  const uploadedChunkCount = chunkUploads.filter((chunk) => chunk.status === 'uploaded').length;
+  const failedChunkCount = chunkUploads.filter((chunk) => chunk.status === 'failed').length;
+  const uploadingChunkCount = chunkUploads.filter((chunk) => chunk.status === 'uploading').length;
+  const totalChunkCount = Math.max(1, Math.ceil(maxSeconds / 5));
+  const completionPercent = Math.min(100, Math.round((recordSeconds / maxSeconds) * 100));
+  const statusHeadline =
+    status === 'recording'
+      ? 'Session live'
+      : status === 'processing'
+      ? 'Analysis running'
+      : status === 'error'
+      ? 'Needs another pass'
+      : status === 'uploading'
+      ? 'Wrapping up capture'
+      : 'Ready to record';
+  const statusCopy =
+    status === 'recording'
+      ? 'Keep speaking naturally. Chunks continue uploading in the background.'
+      : status === 'processing'
+      ? processingStage || 'The transcript and scorecard are being prepared now.'
+      : status === 'error'
+      ? 'The session did not finish cleanly. Use the guidance below, then retry.'
+      : status === 'uploading'
+      ? 'Final media is being assembled before transcription starts.'
+      : 'Camera and mic are armed. Start when you are ready.';
 
   const toggleFocus = (option: string) => {
     setActiveFocus((current) =>
@@ -277,6 +302,24 @@ export default function FreePage() {
             <div className="space-y-6">
               <div className="rounded-2xl border border-cream-300 bg-white p-6 shadow-sm">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Session Status</p>
+                <div className="mt-4 rounded-[28px] bg-[linear-gradient(135deg,rgba(15,23,42,0.04),rgba(25,52,95,0.08),rgba(244,201,120,0.18))] p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-lg font-semibold text-slate-900">{statusHeadline}</p>
+                      <p className="mt-1 max-w-sm text-sm leading-6 text-slate-600">{statusCopy}</p>
+                    </div>
+                    <div className="rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-slate-700 shadow-sm">
+                      {completionPercent}% of max time
+                    </div>
+                  </div>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/70">
+                    <div
+                      className="h-full rounded-full bg-[linear-gradient(90deg,#19345f_0%,#355c9b_55%,#f4c978_100%)] transition-all duration-300"
+                      style={{ width: `${completionPercent}%` }}
+                    />
+                  </div>
+                </div>
+
                 <div className="mt-4 space-y-4">
                   <div className="flex items-center justify-between rounded-2xl bg-cream-50 px-4 py-3">
                     <span className="text-sm font-medium text-slate-700">Time elapsed</span>
@@ -306,11 +349,32 @@ export default function FreePage() {
                       {isRecording && <span className="h-3 w-3 animate-pulse rounded-full bg-navy-500" />}
                     </div>
                   </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Completed</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-900">{uploadedChunkCount}</p>
+                      <p className="text-xs text-slate-500">of {totalChunkCount} expected chunks</p>
+                    </div>
+                    <div className="rounded-2xl bg-amber-50 px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-amber-600">In flight</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-900">{uploadingChunkCount}</p>
+                      <p className="text-xs text-slate-500">upload requests running</p>
+                    </div>
+                    <div className="rounded-2xl bg-rose-50 px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-rose-600">Needs attention</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-900">{failedChunkCount}</p>
+                      <p className="text-xs text-slate-500">chunk uploads failed</p>
+                    </div>
+                  </div>
                 </div>
 
                 {errorMessage && (
-                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
-                    {errorMessage}
+                  <div className="mt-4 rounded-[24px] border border-rose-200 bg-[linear-gradient(135deg,rgba(255,241,242,0.95),rgba(255,247,237,0.92))] px-4 py-4">
+                    <p className="text-sm font-semibold text-rose-700">Recording needs a retry</p>
+                    <p className="mt-2 text-sm leading-6 text-rose-700">{errorMessage}</p>
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-rose-500">
+                      Quick fix: let the mic capture for a second before stopping, then try again.
+                    </p>
                   </div>
                 )}
 

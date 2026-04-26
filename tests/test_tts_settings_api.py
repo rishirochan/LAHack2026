@@ -82,6 +82,27 @@ class TtsSettingsApiTests(unittest.TestCase):
             "Hi, my name is Ava. Here's what I sound like at your selected speed.",
         )
 
+    def test_phase_a_tts_endpoint_returns_audio(self) -> None:
+        ai_service = SimpleNamespace()
+        synthesize_mock = AsyncMock(return_value=b"phase-a-audio")
+
+        with (
+            patch("backend.shared.ai.get_ai_service", return_value=ai_service),
+            patch("backend.sprint.phase_b.elevenlabs.synthesize_tts_audio", synthesize_mock),
+        ):
+            response = self.client.post(
+                "/api/phase-a/tts",
+                json={"text": "Practice this line."},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"phase-a-audio")
+        self.assertEqual(response.headers["content-type"], "audio/mpeg")
+        self.assertEqual(
+            synthesize_mock.await_args.kwargs["text"],
+            "Practice this line.",
+        )
+
     def test_phase_b_next_turn_updates_voice_id_before_prompt(self) -> None:
         session = self.manager.create_session(
             scenario_preference="interview",

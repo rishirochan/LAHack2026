@@ -120,6 +120,7 @@ export default function ConversationPage() {
       videoRecorderRef.current = null;
       audioCaptureRef.current = null;
       videoChunksRef.current = [];
+      stopTracks();
       setLocalError('That recording was too short. Try again with a full response.');
       return;
     }
@@ -132,6 +133,7 @@ export default function ConversationPage() {
     videoRecorderRef.current = null;
     audioCaptureRef.current = null;
     videoChunksRef.current = [];
+    stopTracks();
     try {
       await submitTurn(
         videoBlob,
@@ -183,17 +185,14 @@ export default function ConversationPage() {
   function stopTracks() {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
+    if (previewRef.current) {
+      previewRef.current.srcObject = null;
+    }
   }
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversationTurns, processingStage, status]);
-
-  useEffect(() => {
-    if (status !== 'setup') {
-      void ensurePreviewStream();
-    }
-  }, [status]);
 
   useEffect(() => {
     setSecondsRemaining(maxRecordingSeconds);

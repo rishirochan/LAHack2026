@@ -213,31 +213,74 @@ def _to_phase_c_replay_recording(session: dict) -> dict[str, object] | None:
     if session.get("mode") != "phase_c":
         return None
 
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
     raw_state = session.get("raw_state")
     if not isinstance(raw_state, dict):
         return {
-            "scorecard": None,
-            "written_summary": "",
+            "scorecard": _phase_c_replay_scorecard_from_summary(summary),
+            "written_summary": str(summary.get("written_summary") or ""),
             "merged_chunks": [],
         }
 
     completed_recording = raw_state.get("completed_recording")
     if not isinstance(completed_recording, dict):
         return {
-            "scorecard": None,
-            "written_summary": "",
+            "scorecard": _phase_c_replay_scorecard_from_summary(summary),
+            "written_summary": str(summary.get("written_summary") or ""),
             "merged_chunks": [],
         }
 
     merged_analysis = completed_recording.get("merged_analysis")
     merged_chunks = merged_analysis.get("chunks") if isinstance(merged_analysis, dict) else []
+    scorecard = completed_recording.get("scorecard")
 
     return {
-        "scorecard": completed_recording.get("scorecard") if isinstance(completed_recording.get("scorecard"), dict) else None,
+        "scorecard": scorecard if isinstance(scorecard, dict) else _phase_c_replay_scorecard_from_summary(summary),
         "written_summary": completed_recording.get("written_summary")
         if isinstance(completed_recording.get("written_summary"), str)
-        else "",
+        else str(summary.get("written_summary") or ""),
         "merged_chunks": merged_chunks if isinstance(merged_chunks, list) else [],
+    }
+
+
+def _phase_c_replay_scorecard_from_summary(summary: dict[str, object]) -> dict[str, object] | None:
+    if not summary:
+        return None
+
+    if summary.get("overall_score") is None:
+        return None
+
+    return {
+        "duration_seconds": summary.get("duration_seconds") or 0,
+        "transcript_word_count": 0,
+        "average_wpm": summary.get("average_wpm") or 0,
+        "wpm_by_chunk": [],
+        "pacing_drift": {
+            "average_wpm": summary.get("average_wpm") or 0,
+            "target_band": [120, 170],
+            "too_fast_chunks": 0,
+            "too_slow_chunks": 0,
+            "trend": "mixed",
+        },
+        "filler_word_count": summary.get("filler_word_count") or 0,
+        "filler_word_breakdown": summary.get("filler_word_breakdown") or {},
+        "repetition": {
+            "top_repeated_words": [],
+            "top_repeated_phrases": [],
+        },
+        "emotion_flags": {
+            "emotional_flatness": {"triggered": False},
+            "nervousness_persistence": {"triggered": False},
+        },
+        "chunk_health": {
+            "total_chunks": 0,
+            "done_chunks": 0,
+            "timed_out_chunks": 0,
+            "failed_chunks": 0,
+        },
+        "overall_score": summary.get("overall_score") or 0,
+        "strengths": summary.get("strengths") or [],
+        "improvement_areas": summary.get("improvement_areas") or [],
     }
 
 
@@ -375,6 +418,28 @@ async def get_phase_a_summary(session_id: str) -> SessionSummaryResponse:
         return get_session_manager().get_summary(session_id)
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/phase-a/tts")
+async def synthesize_phase_a_tts(payload: dict[str, object]) -> Response:
+    """Synthesize optional Phase A playback without blocking the session graph."""
+
+    from backend.shared.ai import get_ai_service
+    from backend.sprint.phase_b.elevenlabs import synthesize_tts_audio
+
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required for Phase A playback.")
+
+    try:
+        audio = await synthesize_tts_audio(
+            ai_service=get_ai_service(),
+            text=text,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Phase A playback failed: {error}") from error
+
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @app.get("/api/phase-a/sessions/{session_id}/rounds/{round_index}/{media_kind}")

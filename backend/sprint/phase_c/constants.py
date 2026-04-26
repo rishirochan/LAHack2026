@@ -10,10 +10,6 @@ RETRY_EMPTY_MESSAGE = "The recording was empty. Check camera and microphone acce
 RETRY_INVALID_CHUNKS_MESSAGE = "Some recording chunks were missing or overlapped. Please record that turn again."
 RETRY_TOO_LONG_MESSAGE = f"That response ran too long. Keep it under {PHASE_C_MAX_SECONDS} seconds."
 
-FILLER_WORDS = ("like", "um", "you know", "basically", "literally")
-FILLER_SINGLE_WORDS = {word for word in FILLER_WORDS if " " not in word}
-FILLER_MULTI_WORDS = tuple(word for word in FILLER_WORDS if " " in word)
-
 PACE_WPM_MIN = 120
 PACE_WPM_MAX = 170
 PACE_STABLE_DELTA = 10
