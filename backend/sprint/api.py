@@ -774,6 +774,124 @@ async def _run_phase_a_graph(session_id: str, initial_state: dict) -> None:
         )
 
 
+async def _run_phase_b_next_turn(
+    session_id: str,
+    request: NextTurnRequest | None = None,
+) -> dict[str, str]:
+    """Generate the next peer turn and optionally speak it over the websocket."""
+
+    try:
+        state = get_phase_b_manager().get_state(session_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    if state["status"] != "active":
+        raise HTTPException(status_code=409, detail="Session is not active.")
+    if state["turn_index"] >= state["max_turns"]:
+        raise HTTPException(status_code=409, detail="All turns have been completed.")
+    if get_phase_b_manager().has_active_turn(session_id):
+        raise HTTPException(status_code=409, detail="Finish the active turn before requesting the next one.")
+
+    if request is not None:
+        get_phase_b_manager().set_voice_id(session_id, request.voice_id)
+        state = get_phase_b_manager().get_state(session_id)
+
+    result = await prompt_graph.ainvoke(
+        state,
+        config={"configurable": {"session_id": session_id}},
+    )
+
+    updated = get_phase_b_manager().get_state(session_id)
+    if updated["status"] != "active":
+        return {"status": "session_complete"}
+    if updated.get("current_turn") is None:
+        detail = "Could not generate the next peer turn."
+        if isinstance(result, dict) and result.get("error"):
+            detail = str(result["error"])
+        raise HTTPException(status_code=500, detail=detail)
+
+    should_speak_peer_message = True if request is None else bool(request.speak_peer_message)
+    if should_speak_peer_message:
+        await stream_peer_tts(session_id)
+
+    refreshed = get_phase_b_manager().get_state(session_id)
+    if refreshed["status"] != "active":
+        return {"status": "session_complete"}
+    if refreshed.get("current_turn") is None:
+        raise HTTPException(status_code=409, detail="The active turn ended before recording could begin.")
+
+    await get_phase_b_manager().send_event(
+        session_id,
+        "recording_ready",
+        {"max_seconds": PHASE_B_MAX_SECONDS, "turn_index": refreshed["turn_index"]},
+    )
+
+    return {"status": "prompt_sent"}
+
+
+def _queue_phase_b_next_turn(
+    session_id: str,
+    *,
+    voice_id: str | None = None,
+    speak_peer_message: bool = True,
+) -> bool:
+    """Schedule the next peer turn in the background when the session is ready."""
+
+    manager = get_phase_b_manager()
+    try:
+        if not manager.is_active(session_id):
+            return False
+        if manager.has_active_turn(session_id):
+            return False
+        if manager.has_pending_next_turn(session_id):
+            return False
+    except RuntimeError:
+        return False
+
+    request = NextTurnRequest(
+        voice_id=voice_id,
+        speak_peer_message=speak_peer_message,
+    )
+    task = asyncio.create_task(_run_phase_b_next_turn(session_id, request=request))
+    manager.set_next_turn_task(session_id, task)
+    task.add_done_callback(
+        lambda completed_task, sid=session_id: _finalize_phase_b_next_turn_task(sid, completed_task)
+    )
+    return True
+
+
+def _finalize_phase_b_next_turn_task(session_id: str, task: asyncio.Task[dict[str, str]]) -> None:
+    manager = get_phase_b_manager()
+    try:
+        manager.clear_next_turn_task(session_id, task)
+    except RuntimeError:
+        return
+
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as error:
+        try:
+            if not manager.is_active(session_id):
+                return
+        except RuntimeError:
+            return
+
+        message = getattr(error, "detail", None) or str(error) or "Could not generate the next peer turn."
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(
+            manager.send_event(
+                session_id,
+                "error",
+                {"message": str(message)},
+            )
+        )
+
+
 # ======================================================================
 # Phase B — Long-form AI Conversation
 # ======================================================================
@@ -788,6 +906,11 @@ async def start_phase_b_session(request: StartConversationRequest) -> StartConve
         voice_id=request.voice_id,
         max_turns=request.max_turns,
         minimum_turns=request.minimum_turns,
+    )
+    _queue_phase_b_next_turn(
+        session.session_id,
+        voice_id=request.voice_id,
+        speak_peer_message=True,
     )
     return StartConversationResponse(session_id=session.session_id)
 
@@ -848,52 +971,12 @@ async def phase_b_next_turn(
     """
 
     try:
-        state = get_phase_b_manager().get_state(session_id)
+        if get_phase_b_manager().has_pending_next_turn(session_id):
+            raise HTTPException(status_code=409, detail="Already preparing the next peer turn.")
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
-    if state["status"] != "active":
-        raise HTTPException(status_code=409, detail="Session is not active.")
-    if state["turn_index"] >= state["max_turns"]:
-        raise HTTPException(status_code=409, detail="All turns have been completed.")
-    if get_phase_b_manager().has_active_turn(session_id):
-        raise HTTPException(status_code=409, detail="Finish the active turn before requesting the next one.")
-
-    if request is not None:
-        get_phase_b_manager().set_voice_id(session_id, request.voice_id)
-        state = get_phase_b_manager().get_state(session_id)
-
-    result = await prompt_graph.ainvoke(
-        state,
-        config={"configurable": {"session_id": session_id}},
-    )
-
-    updated = get_phase_b_manager().get_state(session_id)
-    if updated["status"] != "active":
-        return {"status": "session_complete"}
-    if updated.get("current_turn") is None:
-        detail = "Could not generate the next peer turn."
-        if isinstance(result, dict) and result.get("error"):
-            detail = str(result["error"])
-        raise HTTPException(status_code=500, detail=detail)
-
-    should_speak_peer_message = True if request is None else bool(request.speak_peer_message)
-    if should_speak_peer_message:
-        await stream_peer_tts(session_id)
-
-    refreshed = get_phase_b_manager().get_state(session_id)
-    if refreshed["status"] != "active":
-        return {"status": "session_complete"}
-    if refreshed.get("current_turn") is None:
-        raise HTTPException(status_code=409, detail="The active turn ended before recording could begin.")
-
-    await get_phase_b_manager().send_event(
-        session_id,
-        "recording_ready",
-        {"max_seconds": PHASE_B_MAX_SECONDS, "turn_index": refreshed["turn_index"]},
-    )
-
-    return {"status": "prompt_sent"}
+    return await _run_phase_b_next_turn(session_id, request=request)
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/{turn_index}/chunks")
@@ -1025,7 +1108,11 @@ async def phase_b_transcribe(
 
 
 @app.post("/api/phase-b/sessions/{session_id}/turns/{turn_index}/complete")
-async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, object]:
+async def phase_b_complete_turn(
+    session_id: str,
+    turn_index: int,
+    request: NextTurnRequest | None = None,
+) -> dict[str, object]:
     """Run the critique pipeline after recording + chunks + STT are done.
 
     Executes: collect_chunks → merge_summary → judge_response → speak_critique
@@ -1083,16 +1170,27 @@ async def phase_b_complete_turn(session_id: str, turn_index: int) -> dict[str, o
         return {
             "status": "session_complete",
             "continue_conversation": False,
+            "completed_turn": _public_phase_b_turn(session_id, completed_turn),
             "turn_analysis": completed_turn.get("turn_analysis"),
             "momentum_reason": momentum.get("reason"),
             "final_report": final_state.get("final_report"),
+            "session_status": final_state["status"],
         }
+
+    queued_next_turn = _queue_phase_b_next_turn(
+        session_id,
+        voice_id=request.voice_id if request is not None else state.get("voice_id"),
+        speak_peer_message=True if request is None else bool(request.speak_peer_message),
+    )
 
     return {
         "status": "turn_complete",
         "continue_conversation": True,
+        "completed_turn": _public_phase_b_turn(session_id, completed_turn),
         "turn_analysis": completed_turn.get("turn_analysis"),
         "momentum_reason": momentum.get("reason"),
+        "next_turn_status": "queued" if queued_next_turn else "idle",
+        "session_status": get_phase_b_manager().get_state(session_id)["status"],
     }
 
 

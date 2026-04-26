@@ -1,5 +1,6 @@
 """In-memory session coordination for Phase B conversation sessions."""
 
+from asyncio import Task
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -30,6 +31,7 @@ class ActiveConversation:
     state: PhaseBState
     websocket: WebSocket | None = None
     pending_events: list[dict[str, Any]] = field(default_factory=list)
+    next_turn_task: Task[Any] | None = None
 
 
 class PhaseBSessionManager:
@@ -104,6 +106,19 @@ class PhaseBSessionManager:
 
     def has_active_turn(self, session_id: str) -> bool:
         return self.get_state(session_id).get("current_turn") is not None
+
+    def has_pending_next_turn(self, session_id: str) -> bool:
+        task = self.get_session(session_id).next_turn_task
+        return task is not None and not task.done()
+
+    def set_next_turn_task(self, session_id: str, task: Task[Any]) -> None:
+        self.get_session(session_id).next_turn_task = task
+
+    def clear_next_turn_task(self, session_id: str, task: Task[Any] | None = None) -> None:
+        session = self.get_session(session_id)
+        if task is not None and session.next_turn_task is not task:
+            return
+        session.next_turn_task = None
 
     # ------------------------------------------------------------------
     # Turn management
@@ -328,6 +343,7 @@ class PhaseBSessionManager:
 
     def begin_session_shutdown(self, session_id: str) -> PhaseBState:
         state = self.get_state(session_id)
+        self._cancel_next_turn_task(session_id)
         self.discard_active_turn(session_id)
         state["status"] = "complete"
         self.persist_state(session_id)
@@ -335,9 +351,17 @@ class PhaseBSessionManager:
 
     def end_session(self, session_id: str) -> PhaseBState:
         state = self.get_state(session_id)
+        self._cancel_next_turn_task(session_id)
         state["status"] = "complete"
         self.persist_state(session_id)
         return state
+
+    def _cancel_next_turn_task(self, session_id: str) -> None:
+        session = self.get_session(session_id)
+        task = session.next_turn_task
+        if task is not None and not task.done():
+            task.cancel()
+        session.next_turn_task = None
 
     def persist_state(self, session_id: str) -> None:
         state = self.get_state(session_id)

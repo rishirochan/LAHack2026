@@ -120,13 +120,14 @@ class PhaseBApiTests(unittest.TestCase):
     def test_start_session_stores_practice_prompt(self) -> None:
         self.manager._sessions.clear()
 
-        response = self.client.post(
-            "/api/phase-b/sessions",
-            json={
-                "practice_prompt": "I have a Roblox interview tomorrow and want to practice with a thoughtful hiring manager.",
-                "voice_id": "voice-42",
-            },
-        )
+        with patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True) as queue_mock:
+            response = self.client.post(
+                "/api/phase-b/sessions",
+                json={
+                    "practice_prompt": "I have a Roblox interview tomorrow and want to practice with a thoughtful hiring manager.",
+                    "voice_id": "voice-42",
+                },
+            )
 
         self.assertEqual(response.status_code, 200)
         session_id = response.json()["session_id"]
@@ -136,6 +137,11 @@ class PhaseBApiTests(unittest.TestCase):
             "I have a Roblox interview tomorrow and want to practice with a thoughtful hiring manager.",
         )
         self.assertEqual(state["voice_id"], "voice-42")
+        queue_mock.assert_called_once_with(
+            session_id,
+            voice_id="voice-42",
+            speak_peer_message=True,
+        )
 
     def test_start_session_rejects_prompt_over_word_limit(self) -> None:
         self.manager._sessions.clear()
@@ -151,7 +157,10 @@ class PhaseBApiTests(unittest.TestCase):
 
     def test_complete_rejects_turn_with_no_chunks(self) -> None:
         critique_mock = AsyncMock(return_value={})
-        with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
+        with (
+            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True),
+        ):
             response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
@@ -176,7 +185,10 @@ class PhaseBApiTests(unittest.TestCase):
         )
 
         critique_mock = AsyncMock(return_value={})
-        with patch.object(sprint_api.critique_graph, "ainvoke", critique_mock):
+        with (
+            patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True),
+        ):
             response = self.client.post(self._complete_url())
 
         self.assertEqual(response.status_code, 409)
@@ -361,6 +373,7 @@ class PhaseBApiTests(unittest.TestCase):
         with (
             patch.object(sprint_api.critique_graph, "ainvoke", critique_mock),
             patch("backend.sprint.phase_b.imentiv.analyze_audio", analyze_audio_mock),
+            patch("backend.sprint.api._queue_phase_b_next_turn", return_value=True),
         ):
             response = self.client.post(self._complete_url())
 

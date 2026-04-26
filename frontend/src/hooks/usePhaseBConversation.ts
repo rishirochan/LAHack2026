@@ -84,6 +84,20 @@ type WebsocketEvent = {
   payload: Record<string, unknown>;
 };
 
+type CompleteTurnResponse = {
+  status: string;
+  continue_conversation: boolean;
+  completed_turn?: ConversationTurn | null;
+  turn_analysis?: TurnAnalysis | null;
+  final_report?: FinalReport | null;
+};
+
+type EndSessionResponse = {
+  status: string;
+  turns: ConversationTurn[];
+  final_report?: FinalReport | null;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000';
 
@@ -173,7 +187,6 @@ export function usePhaseBConversation(options?: {
       setSessionId(data.session_id);
       setPracticePrompt(normalizedPrompt);
       connectWebsocket(data.session_id);
-      await requestNextTurn(data.session_id);
     } catch (error) {
       stopActiveAudio();
       websocketRef.current?.close();
@@ -207,7 +220,6 @@ export function usePhaseBConversation(options?: {
       throw new Error(detail || 'Could not get the next peer turn.');
     }
 
-    await refreshSession(activeSessionId);
   }
 
   async function submitTurn(
@@ -280,6 +292,8 @@ export function usePhaseBConversation(options?: {
       `${API_URL}/api/phase-b/sessions/${sessionId}/turns/${turnIndex}/complete`,
       {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice_id: voiceId, speak_peer_message: playPeerVoice }),
       },
     );
 
@@ -288,12 +302,10 @@ export function usePhaseBConversation(options?: {
       throw new Error(detail || 'Could not complete the turn.');
     }
 
-    const completeData = (await completeResponse.json()) as {
-      continue_conversation: boolean;
-      final_report?: FinalReport | null;
-    };
-
-    await refreshSession(sessionId);
+    const completeData = (await completeResponse.json()) as CompleteTurnResponse;
+    if (completeData.completed_turn) {
+      applyCompletedTurn(completeData.completed_turn);
+    }
 
     if (completeData.final_report) {
       setFinalReport(completeData.final_report);
@@ -304,7 +316,8 @@ export function usePhaseBConversation(options?: {
     }
 
     if (completeData.continue_conversation) {
-      await requestNextTurn(sessionId);
+      setStatus('starting');
+      setProcessingStage('Generating the next step');
       return;
     }
 
@@ -331,13 +344,14 @@ export function usePhaseBConversation(options?: {
         throw new Error(detail || 'Could not end the conversation.');
       }
 
-      const data = (await response.json()) as { final_report?: FinalReport | null };
+      const data = (await response.json()) as EndSessionResponse;
       if (data.final_report) {
         setFinalReport(data.final_report);
       }
+      setTurns(data.turns ?? []);
+      setCurrentTurn(null);
       websocketRef.current?.close();
       websocketRef.current = null;
-      await refreshSession(sessionId);
       setStatus('complete');
     } catch (error) {
       endRequestedRef.current = false;
@@ -391,6 +405,7 @@ export function usePhaseBConversation(options?: {
       case 'prompt_generated': {
         const promptText = String(event.payload.prompt_text ?? '');
         const nextTurnIndex = Number(event.payload.turn_index ?? 0);
+        setProcessingStage('');
         setCurrentTurn({
           turn_index: Number.isFinite(nextTurnIndex) ? nextTurnIndex : 0,
           prompt_text: promptText,
@@ -441,7 +456,10 @@ export function usePhaseBConversation(options?: {
         }
         break;
       case 'turn_analysis_ready':
-        void refreshSession();
+        applyTurnAnalysis(
+          Number(event.payload.turn_index ?? -1),
+          normalizeTurnAnalysis(event.payload.turn_analysis),
+        );
         break;
       case 'session_complete':
         endRequestedRef.current = true;
@@ -450,7 +468,6 @@ export function usePhaseBConversation(options?: {
           setFinalReport(event.payload.final_report as FinalReport);
         }
         setStatus('complete');
-        void refreshSession();
         break;
       case 'error':
         setStatus('error');
@@ -621,6 +638,47 @@ export function usePhaseBConversation(options?: {
     audio.pause();
     audio.currentTime = 0;
     detachAudioElement(audio);
+  }
+
+  function applyCompletedTurn(turn: ConversationTurn) {
+    setTurns((existing) => {
+      const nextTurns = existing.filter((item) => item.turn_index !== turn.turn_index);
+      nextTurns.push(turn);
+      nextTurns.sort((left, right) => left.turn_index - right.turn_index);
+      return nextTurns;
+    });
+    setCurrentTurn((existing) =>
+      existing && existing.turn_index === turn.turn_index ? null : existing,
+    );
+  }
+
+  function applyTurnAnalysis(turnIndex: number, turnAnalysis: TurnAnalysis | null) {
+    if (turnIndex < 0 || !turnAnalysis) {
+      return;
+    }
+
+    setCurrentTurn((existing) => {
+      if (!existing || existing.turn_index !== turnIndex) {
+        return existing;
+      }
+      return {
+        ...existing,
+        analysis_status: turnAnalysis.analysis_status,
+        turn_analysis: turnAnalysis,
+      };
+    });
+
+    setTurns((existing) =>
+      existing.map((turn) =>
+        turn.turn_index === turnIndex
+          ? {
+              ...turn,
+              analysis_status: turnAnalysis.analysis_status,
+              turn_analysis: turnAnalysis,
+            }
+          : turn,
+      ),
+    );
   }
 
   function haltLiveConversation() {
@@ -811,4 +869,31 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
+}
+
+function normalizeTurnAnalysis(value: unknown): TurnAnalysis | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<TurnAnalysis>;
+  if (typeof candidate.summary !== 'string' || !Array.isArray(candidate.strengths)) {
+    return null;
+  }
+
+  return {
+    analysis_status:
+      candidate.analysis_status === 'ready' || candidate.analysis_status === 'partial'
+        ? candidate.analysis_status
+        : 'pending',
+    summary: candidate.summary,
+    momentum_score: Number(candidate.momentum_score ?? 0),
+    content_quality_score: Number(candidate.content_quality_score ?? 0),
+    emotional_delivery_score: Number(candidate.emotional_delivery_score ?? 0),
+    energy_match_score: Number(candidate.energy_match_score ?? 0),
+    authenticity_score: Number(candidate.authenticity_score ?? 0),
+    follow_up_invitation_score: Number(candidate.follow_up_invitation_score ?? 0),
+    strengths: candidate.strengths.map(String),
+    growth_edges: Array.isArray(candidate.growth_edges) ? candidate.growth_edges.map(String) : [],
+  };
 }
